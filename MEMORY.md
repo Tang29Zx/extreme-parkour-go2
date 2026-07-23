@@ -96,6 +96,14 @@
   `vulkaninfo`确认Vulkan编号，再分别传`--device cuda:N`和
   `--graphics_device_id K`。随机箱相机地形的Delatin误差固定为`0.01 m`，
   防止继承原配置的`max_error_camera=2 m`后改变箱体几何。
+- 192环境的随机箱视觉蒸馏进程在24GB GPU上实测占用约`16.5 GiB`（包含
+  Isaac Gym非PyTorch显存）；如果同卡已有约`6.9 GiB`进程，会在首次深度卷积
+  时OOM。该配置需要基本独占一张24GB卡；共享GPU时先确认进程归属，不能停止
+  他人任务，必要时将相机环境数降至128。
+- 相机深度后处理必须保持批量张量路径：Isaac Gym仍需逐传感器取得GPU tensor，
+  但裁剪、高斯噪声、距离偏置、点丢失、随机遮挡、Bicubic缩放和历史buffer更新
+  应在`torch.stack`后的全环境batch上执行，避免192环境逐张触发Python循环和
+  GPU kernel。
 - 推荐路径是先用最终 teacher policy 蒸馏得到深度相机 student，再导出匹配的
   base JIT 与 vision weights。teacher policy、视觉编码器与导出权重必须来自
   同一训练版本，不能把旧视觉权重和后续修改过的 Actor 混用。

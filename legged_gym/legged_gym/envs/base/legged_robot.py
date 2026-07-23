@@ -177,9 +177,10 @@ class LeggedRobot(BaseTask):
         depth_image = (depth_image - self.cfg.depth.near_clip) / (self.cfg.depth.far_clip - self.cfg.depth.near_clip)  - 0.5
         return depth_image
     
-    def process_depth_image(self, depth_image, env_id):
+    def process_depth_images(self, depth_images):
+        """Apply depth augmentation and resizing to the full environment batch."""
         # These operations are replicated on the hardware
-        depth_image = self.crop_depth_image(depth_image)
+        depth_images = self.crop_depth_image(depth_images)
 
         gaussian_noise_std = getattr(
             self.cfg.depth,
@@ -187,51 +188,90 @@ class LeggedRobot(BaseTask):
             getattr(self.cfg.depth, "guassian_noise_std", 0.0),
         )
         if gaussian_noise_std > 0.0:
-            gaussian_noise = torch.randn_like(depth_image) * gaussian_noise_std
-            depth_image += gaussian_noise
-        
-        depth_image += self.cfg.depth.dis_noise * 2 * (torch.rand(1)-0.5)[0]
+            depth_images += torch.randn_like(depth_images) * gaussian_noise_std
+
+        batch_size, image_height, image_width = depth_images.shape
+        if self.cfg.depth.dis_noise > 0.0:
+            distance_noise = torch.rand(
+                (batch_size, 1, 1),
+                dtype=depth_images.dtype,
+                device=depth_images.device,
+            )
+            depth_images += self.cfg.depth.dis_noise * 2 * (distance_noise - 0.5)
+
         dropout_prob = float(getattr(self.cfg.depth, "depth_dropout_prob", 0.0))
         if dropout_prob > 0.0:
-            dropout = torch.rand_like(depth_image) < dropout_prob
-            depth_image = torch.where(
+            dropout = torch.rand_like(depth_images) < dropout_prob
+            depth_images = torch.where(
                 dropout,
-                torch.full_like(depth_image, -float(self.cfg.depth.far_clip)),
-                depth_image,
+                torch.full_like(depth_images, -float(self.cfg.depth.far_clip)),
+                depth_images,
             )
 
         occlusion_prob = float(getattr(self.cfg.depth, "depth_occlusion_prob", 0.0))
-        if occlusion_prob > 0.0 and torch.rand(1).item() < occlusion_prob:
+        if occlusion_prob > 0.0:
             lower, upper = getattr(
                 self.cfg.depth, "depth_occlusion_size_range", [0.05, 0.15]
             )
-            image_height, image_width = depth_image.shape[-2:]
-            fraction = float(torch.empty(1).uniform_(lower, upper).item())
-            rect_height = max(1, int(round(image_height * fraction)))
-            rect_width = max(1, int(round(image_width * fraction)))
-            top = int(torch.randint(0, image_height - rect_height + 1, (1,)).item())
-            left = int(torch.randint(0, image_width - rect_width + 1, (1,)).item())
-            depth_image[top:top + rect_height, left:left + rect_width] = -float(
-                self.cfg.depth.far_clip
+            fractions = lower + (upper - lower) * torch.rand(
+                batch_size,
+                dtype=depth_images.dtype,
+                device=depth_images.device,
             )
+            rect_heights = torch.round(fractions * image_height).long().clamp(
+                1, image_height
+            )
+            rect_widths = torch.round(fractions * image_width).long().clamp(
+                1, image_width
+            )
+            tops = torch.floor(
+                torch.rand(batch_size, device=depth_images.device)
+                * (image_height - rect_heights + 1)
+            ).long()
+            lefts = torch.floor(
+                torch.rand(batch_size, device=depth_images.device)
+                * (image_width - rect_widths + 1)
+            ).long()
+            rows = torch.arange(
+                image_height, device=depth_images.device
+            ).view(1, image_height, 1)
+            columns = torch.arange(
+                image_width, device=depth_images.device
+            ).view(1, 1, image_width)
+            occlusion_mask = (
+                (torch.rand(batch_size, device=depth_images.device) < occlusion_prob)
+                .view(batch_size, 1, 1)
+                & (rows >= tops.view(batch_size, 1, 1))
+                & (rows < (tops + rect_heights).view(batch_size, 1, 1))
+                & (columns >= lefts.view(batch_size, 1, 1))
+                & (columns < (lefts + rect_widths).view(batch_size, 1, 1))
+            )
+            depth_images = torch.where(
+                occlusion_mask,
+                torch.full_like(depth_images, -float(self.cfg.depth.far_clip)),
+                depth_images,
+            )
+
         # if self.cfg.depth.dis_noise > 0:
         #     print('depth image has been noised.')
         # print('depth image before clip and norm: ', depth_image)
-        depth_image = torch.clip(depth_image, -self.cfg.depth.far_clip, -self.cfg.depth.near_clip)
+        depth_images = torch.clip(
+            depth_images, -self.cfg.depth.far_clip, -self.cfg.depth.near_clip
+        )
         # print('depth image after clip: ', depth_image)
-        depth_image = self.resize_transform(depth_image[None, :]).squeeze()
+        depth_images = self.resize_transform(depth_images.unsqueeze(1)).squeeze(1)
         # print('depth image before normalize: ', depth_image[-10:, :])
-        depth_image = self.normalize_depth_image(depth_image)
+        depth_images = self.normalize_depth_image(depth_images)
         # print('depth image sim: ', depth_image)
         # np.save('depth_image_sim_336-11_flat.npy', depth_image.cpu().numpy())
         # depth_image = torch.zeros_like(depth_image) + 0.5
         # print('depth image after clip and norm: ', depth_image)
         # print('min and max of depth image after clip and norm: ', depth_image.min(), depth_image.max())
-        return depth_image
+        return depth_images
 
-    def crop_depth_image(self, depth_image):
+    def crop_depth_image(self, depth_images):
         # crop 30 pixels from the left and right and and 20 pixels from bottom and return croped image
-        return depth_image[:-2, 4:-4]
+        return depth_images[..., :-2, 4:-4]
 
     def update_depth_buffer(self):
         if not self.cfg.depth.use_camera:
@@ -243,23 +283,23 @@ class LeggedRobot(BaseTask):
         self.gym.render_all_camera_sensors(self.sim)
         self.gym.start_access_image_tensors(self.sim)
 
+        depth_images = []
         for i in range(self.num_envs):
             depth_image_ = self.gym.get_camera_image_gpu_tensor(self.sim, 
                                                                 self.envs[i], 
                                                                 self.cam_handles[i],
                                                                 gymapi.IMAGE_DEPTH)
-            
-            depth_image = gymtorch.wrap_tensor(depth_image_)
-            # print('depth image shape: ', depth_image.shape)
-            # print('The original depth image data: ', depth_image[:, :-5, :])
-            # np.save('depth_image.npy', depth_image.cpu().numpy())
-            depth_image = self.process_depth_image(depth_image, i)
+            depth_images.append(gymtorch.wrap_tensor(depth_image_))
 
-            init_flag = self.episode_length_buf <= 1
-            if init_flag[i]:
-                self.depth_buffer[i] = torch.stack([depth_image] * self.cfg.depth.buffer_len, dim=0)
-            else:
-                self.depth_buffer[i] = torch.cat([self.depth_buffer[i, 1:], depth_image.to(self.device).unsqueeze(0)], dim=0)
+        depth_images = self.process_depth_images(torch.stack(depth_images, dim=0))
+        self.depth_buffer = torch.cat(
+            [self.depth_buffer[:, 1:], depth_images.unsqueeze(1)],
+            dim=1,
+        )
+        init_mask = self.episode_length_buf <= 1
+        self.depth_buffer[init_mask] = depth_images[init_mask].unsqueeze(1).expand(
+            -1, self.cfg.depth.buffer_len, -1, -1
+        )
 
         self.gym.end_access_image_tensors(self.sim)
 
