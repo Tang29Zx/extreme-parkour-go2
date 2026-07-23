@@ -63,54 +63,64 @@ def play(args):
         web_viewer = webviewer.WebViewer()
     faulthandler.enable()
     exptid = args.exptid
-    log_pth = "/home/xihan/projects/extreme-parkour/legged_gym/logs/{}/".format(args.proj_name) + args.exptid
+    log_pth = os.path.join(LEGGED_GYM_ROOT_DIR, "logs", args.proj_name, args.exptid)
     print(log_pth)
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
+    is_five_box_task = args.task == "go2_five_box"
+    is_random_box_task = args.task in {
+        "go2_random_box",
+        "go2_random_box_clean",
+    }
+    preserve_box_terrain = is_five_box_task or is_random_box_task
     # override some parameters for testing
     if args.nodelay:
         env_cfg.domain_rand.action_delay_view = 0
+        env_cfg.domain_rand.action_delay_range = [0, 0]
     env_cfg.env.num_envs = 10
     env_cfg.env.episode_length_s = 60
     env_cfg.commands.resampling_time = 60
-    env_cfg.terrain.num_rows = 5
-    env_cfg.terrain.num_cols = 5
-    env_cfg.terrain.height = [0.02, 0.02]
-    env_cfg.terrain.terrain_dict = {"smooth slope": 0., 
-                                    "rough slope up": 0.0,
-                                    "rough slope down": 0.0,
-                                    "rough stairs up": 0., 
-                                    "rough stairs down": 0., 
-                                    "discrete": 0., 
-                                    "stepping stones": 0.0,
-                                    "gaps": 0., 
-                                    "smooth flat": 0,
-                                    "pit": 0.0,
-                                    "wall": 0.0,
-                                    "platform": 0.,
-                                    "large stairs up": 0.,
-                                    "large stairs down": 0.,
-                                    "parkour": 0.2,
-                                    "parkour_hurdle": 0.2,
-                                    "parkour_flat": 0.,
-                                    "parkour_step": 0.2,
-                                    "parkour_gap": 0.2, 
-                                    "demo": 0.2}
-    
-    env_cfg.terrain.terrain_proportions = list(env_cfg.terrain.terrain_dict.values())
-    env_cfg.terrain.curriculum = False
-    env_cfg.terrain.max_difficulty = True
+    if not preserve_box_terrain:
+        env_cfg.terrain.num_rows = 5
+        env_cfg.terrain.num_cols = 5
+        env_cfg.terrain.height = [0.02, 0.02]
+        env_cfg.terrain.terrain_dict = {"smooth slope": 0.,
+                                        "rough slope up": 0.0,
+                                        "rough slope down": 0.0,
+                                        "rough stairs up": 0.,
+                                        "rough stairs down": 0.,
+                                        "discrete": 0.,
+                                        "stepping stones": 0.0,
+                                        "gaps": 0.,
+                                        "smooth flat": 0,
+                                        "pit": 0.0,
+                                        "wall": 0.0,
+                                        "platform": 0.,
+                                        "large stairs up": 0.,
+                                        "large stairs down": 0.,
+                                        "parkour": 0.2,
+                                        "parkour_hurdle": 0.2,
+                                        "parkour_flat": 0.,
+                                        "parkour_step": 0.2,
+                                        "parkour_gap": 0.2,
+                                        "demo": 0.2}
+
+        env_cfg.terrain.terrain_proportions = list(env_cfg.terrain.terrain_dict.values())
+        env_cfg.terrain.curriculum = False
+        env_cfg.terrain.max_difficulty = True
     
     env_cfg.depth.angle = [0, 1]
-    env_cfg.noise.add_noise = True
-    env_cfg.domain_rand.randomize_friction = True
-    env_cfg.domain_rand.push_robots = False
-    env_cfg.domain_rand.push_interval_s = 6
-    env_cfg.domain_rand.randomize_base_mass = False
-    env_cfg.domain_rand.randomize_base_com = False
+    if not is_random_box_task:
+        env_cfg.noise.add_noise = not is_five_box_task
+        env_cfg.domain_rand.randomize_friction = True
+        env_cfg.domain_rand.push_robots = False
+        env_cfg.domain_rand.push_interval_s = 6
+        env_cfg.domain_rand.randomize_base_mass = False
+        env_cfg.domain_rand.randomize_base_com = False
     
     env_cfg_dict = class_to_dict(env_cfg)
     config_path = os.path.join(log_pth, "traced")
-    with open(os.path.join(config_path, "config.json"), "w") as f:
+    config_name = f"config_{args.task}.json" if is_random_box_task else "config.json"
+    with open(os.path.join(config_path, config_name), "w") as f:
         json.dump(env_cfg_dict, f, indent=4)
     print('env config has been saved.')
 

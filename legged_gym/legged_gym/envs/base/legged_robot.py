@@ -123,14 +123,11 @@ class LeggedRobot(BaseTask):
 
         actions.to(self.device)
         self.action_history_buf = torch.cat([self.action_history_buf[:, 1:].clone(), actions[:, None, :].clone()], dim=1)
-        # if self.cfg.domain_rand.action_delay:
-        #     if self.global_counter % self.cfg.domain_rand.delay_update_global_steps == 0:
-        #         if len(self.cfg.domain_rand.action_curr_step) != 0:
-        #             self.delay = torch.tensor(self.cfg.domain_rand.action_curr_step.pop(0), device=self.device, dtype=torch.float)
-        #     if self.viewer:
-        #         self.delay = torch.tensor(self.cfg.domain_rand.action_delay_view, device=self.device, dtype=torch.float)
-        #     indices = -self.delay -1
-        #     actions = self.action_history_buf[:, indices.long()] # delay for 1/50=20ms
+        if self.cfg.domain_rand.action_delay:
+            history_indices = self.action_history_buf.shape[1] - 1 - self.action_delay_steps
+            actions = self.action_history_buf[
+                torch.arange(self.num_envs, device=self.device), history_indices
+            ]
 
         self.global_counter += 1
         self.total_env_steps_counter += 1
@@ -169,11 +166,39 @@ class LeggedRobot(BaseTask):
         # These operations are replicated on the hardware
         depth_image = self.crop_depth_image(depth_image)
 
-        if hasattr(self.cfg.depth, "guassian_noise_std"):
-            gaussian_noise = torch.randn_like(depth_image) * self.cfg.depth.guassian_noise_std
+        gaussian_noise_std = getattr(
+            self.cfg.depth,
+            "gaussian_noise_std",
+            getattr(self.cfg.depth, "guassian_noise_std", 0.0),
+        )
+        if gaussian_noise_std > 0.0:
+            gaussian_noise = torch.randn_like(depth_image) * gaussian_noise_std
             depth_image += gaussian_noise
         
         depth_image += self.cfg.depth.dis_noise * 2 * (torch.rand(1)-0.5)[0]
+        dropout_prob = float(getattr(self.cfg.depth, "depth_dropout_prob", 0.0))
+        if dropout_prob > 0.0:
+            dropout = torch.rand_like(depth_image) < dropout_prob
+            depth_image = torch.where(
+                dropout,
+                torch.full_like(depth_image, -float(self.cfg.depth.far_clip)),
+                depth_image,
+            )
+
+        occlusion_prob = float(getattr(self.cfg.depth, "depth_occlusion_prob", 0.0))
+        if occlusion_prob > 0.0 and torch.rand(1).item() < occlusion_prob:
+            lower, upper = getattr(
+                self.cfg.depth, "depth_occlusion_size_range", [0.05, 0.15]
+            )
+            image_height, image_width = depth_image.shape[-2:]
+            fraction = float(torch.empty(1).uniform_(lower, upper).item())
+            rect_height = max(1, int(round(image_height * fraction)))
+            rect_width = max(1, int(round(image_width * fraction)))
+            top = int(torch.randint(0, image_height - rect_height + 1, (1,)).item())
+            left = int(torch.randint(0, image_width - rect_width + 1, (1,)).item())
+            depth_image[top:top + rect_height, left:left + rect_width] = -float(
+                self.cfg.depth.far_clip
+            )
         # if self.cfg.depth.dis_noise > 0:
         #     print('depth image has been noised.')
         # print('depth image before clip and norm: ', depth_image)
@@ -370,6 +395,14 @@ class LeggedRobot(BaseTask):
         self.obs_history_buf[env_ids, :, :] = 0.  # reset obs history buffer TODO no 0s
         self.contact_buf[env_ids, :, :] = 0.
         self.action_history_buf[env_ids, :, :] = 0.
+        if self.cfg.domain_rand.action_delay:
+            delay_range = self.cfg.domain_rand.action_delay_range
+            self.action_delay_steps[env_ids] = torch.randint(
+                int(delay_range[0]),
+                int(delay_range[1]) + 1,
+                (len(env_ids),),
+                device=self.device,
+            )
         self.cur_goal_idx[env_ids] = 0
         self.reach_goal_timer[env_ids] = 0
 
@@ -415,25 +448,43 @@ class LeggedRobot(BaseTask):
         """
         # imu 表示姿态，roll 滚转角（绕 x 轴），pitch 俯仰角 （绕 y 轴）
         # roll 侧翻，pitch 前后翻滚，yaw 水平旋转
-        imu_obs = torch.stack((self.roll, self.pitch), dim=1)
+        noise_scales = self.cfg.noise.noise_scales
+        imu_obs = self.get_noisy_measurement(
+            torch.stack((self.roll, self.pitch), dim=1), noise_scales.rotation
+        )
         if self.global_counter % 5 == 0:
             # target 是怎么获取的，按照这篇文章的思路，可能是网络计算给出来的（控制器输入呢？管用么？）
             self.delta_yaw = self.target_yaw - self.yaw
             self.delta_next_yaw = self.next_target_yaw - self.yaw
+        delta_yaw_obs = self.get_noisy_measurement(
+            self.delta_yaw[:, None], noise_scales.goal_yaw
+        )
+        delta_next_yaw_obs = self.get_noisy_measurement(
+            self.delta_next_yaw[:, None], noise_scales.goal_yaw
+        )
+        dof_pos_obs = self.get_noisy_measurement(
+            self.dof_pos - self.default_dof_pos_all, noise_scales.dof_pos
+        )
+        dof_vel_obs = self.get_noisy_measurement(self.dof_vel, noise_scales.dof_vel)
+        contact_obs = self.contact_filt.float()
+        if self._observation_noise_enabled():
+            dropout_prob = float(getattr(self.cfg.noise, "contact_dropout_prob", 0.0))
+            if dropout_prob > 0.0:
+                contact_obs *= (torch.rand_like(contact_obs) >= dropout_prob).float()
         obs_buf = torch.cat((#skill_vector, 
-                            self.base_ang_vel  * self.obs_scales.ang_vel,   #[1,3] 机身角速度
+                            self.get_noisy_measurement(self.base_ang_vel, noise_scales.ang_vel) * self.obs_scales.ang_vel,   #[1,3] 机身角速度
                             imu_obs,    #[1,2]
-                            0*self.delta_yaw[:, None], # 占位
-                            self.delta_yaw[:, None], # 当前偏航角误差
-                            self.delta_next_yaw[:, None], # 下一个偏航角误差
+                            0*delta_yaw_obs, # 占位
+                            delta_yaw_obs, # 当前偏航角误差
+                            delta_next_yaw_obs, # 下一个偏航角误差
                             0*self.commands[:, 0:2], # 两个来自控制器的命令，占位？
                             self.commands[:, 0:1],  #[1,1] 前进速度命令
                             (self.env_class != 17).float()[:, None], # 为什么和第 17 个环境有关？
                             (self.env_class == 17).float()[:, None],
-                            self.reindex((self.dof_pos - self.default_dof_pos_all) * self.obs_scales.dof_pos), # 12
-                            self.reindex(self.dof_vel * self.obs_scales.dof_vel), # 12
+                            self.reindex(dof_pos_obs * self.obs_scales.dof_pos), # 12
+                            self.reindex(dof_vel_obs * self.obs_scales.dof_vel), # 12
                             self.reindex(self.action_history_buf[:, -1]), # 12
-                            self.reindex_feet(self.contact_filt.float()-0.5),# 与接触物的碰撞 # 四只脚的接触状态 # 可以获取
+                            self.reindex_feet(contact_obs-0.5),# 与接触物的碰撞 # 四只脚的接触状态 # 可以获取
                             ),dim=-1) # 53
         # print('action stores in actino history buffer: ', self.reindex(self.action_history_buf[:, -1]))
         # print('base ang vel: ', type(self.base_ang_vel), self.base_ang_vel)
@@ -447,7 +498,10 @@ class LeggedRobot(BaseTask):
         # print('env class: ', self.env_class)
 
         # 私有 private，机器人在自身坐标系下的线速度
-        priv_explicit = torch.cat((self.base_lin_vel * self.obs_scales.lin_vel, # 线速度，3
+        noisy_base_lin_vel = self.get_noisy_measurement(
+            self.base_lin_vel, noise_scales.lin_vel
+        )
+        priv_explicit = torch.cat((noisy_base_lin_vel * self.obs_scales.lin_vel, # 线速度，3
                                    0 * self.base_lin_vel, # 3
                                    0 * self.base_lin_vel), dim=-1) # 3
         
@@ -463,7 +517,11 @@ class LeggedRobot(BaseTask):
 
         # True
         if self.cfg.terrain.measure_heights:
-            heights = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.3 - self.measured_heights, -1, 1.)
+            heights = self.root_states[:, 2].unsqueeze(1) - 0.3 - self.measured_heights
+            heights = self.get_noisy_measurement(
+                heights, noise_scales.height_measurements
+            )
+            heights = torch.clip(heights, -1, 1.)
             # print('real scandot: ', heights)
             # heights 大概率是 scandot
             # 多少维？
@@ -499,8 +557,14 @@ class LeggedRobot(BaseTask):
         # print('obs buf in compute obs: ', self.obs_buf)
         
         
+    def _observation_noise_enabled(self):
+        return bool(
+            self.cfg.noise.add_noise
+            and getattr(self.cfg.noise, "apply_observation_noise", False)
+        )
+
     def get_noisy_measurement(self, x, scale):
-        if self.cfg.noise.add_noise:
+        if self._observation_noise_enabled() and float(scale) > 0.0:
             x = x + (2.0 * torch.rand_like(x) - 1) * scale * self.cfg.noise.noise_level
         return x
 
@@ -677,13 +741,19 @@ class LeggedRobot(BaseTask):
 
     def _reset_dofs(self, env_ids):
         """ Resets DOF position and velocities of selected environmments
-        Positions are randomly selected within 0.5:1.5 x default positions.
+        Positions are sampled around the configured default pose.
         Velocities are set to zero.
 
         Args:
             env_ids (List[int]): Environemnt ids
         """
-        self.dof_pos[env_ids] = self.default_dof_pos + torch_rand_float(0., 0.9, (len(env_ids), self.num_dof), device=self.device)
+        reset_range = getattr(self.cfg.env, "dof_pos_reset_range", [0.0, 0.9])
+        self.dof_pos[env_ids] = self.default_dof_pos + torch_rand_float(
+            reset_range[0],
+            reset_range[1],
+            (len(env_ids), self.num_dof),
+            device=self.device,
+        )
         self.dof_vel[env_ids] = 0.
 
         env_ids_int32 = env_ids.to(dtype=torch.int32)
@@ -702,7 +772,13 @@ class LeggedRobot(BaseTask):
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
             if self.cfg.env.randomize_start_pos:
-                self.root_states[env_ids, :2] += torch_rand_float(-0.3, 0.3, (len(env_ids), 2), device=self.device) # xy position within 1m of the center
+                start_pos_range = getattr(self.cfg.env, "start_pos_range", [0.3, 0.3])
+                start_pos_scale = torch.tensor(
+                    start_pos_range, device=self.device, dtype=self.root_states.dtype
+                )
+                self.root_states[env_ids, :2] += torch_rand_float(
+                    -1.0, 1.0, (len(env_ids), 2), device=self.device
+                ) * start_pos_scale
             if self.cfg.env.randomize_start_yaw:
                 rand_yaw = self.cfg.env.rand_yaw_range*torch_rand_float(-1, 1, (len(env_ids), 1), device=self.device).squeeze(1)
                 if self.cfg.env.randomize_start_pitch:
@@ -807,6 +883,14 @@ class LeggedRobot(BaseTask):
         if self.cfg.env.history_encoding:
             self.obs_history_buf = torch.zeros(self.num_envs, self.cfg.env.history_len, self.cfg.env.n_proprio, device=self.device, dtype=torch.float)
         self.action_history_buf = torch.zeros(self.num_envs, self.cfg.domain_rand.action_buf_len, self.num_dofs, device=self.device, dtype=torch.float)
+        delay_range = getattr(self.cfg.domain_rand, "action_delay_range", [0, 0])
+        if int(delay_range[0]) < 0 or int(delay_range[1]) < int(delay_range[0]):
+            raise ValueError("action_delay_range must be ordered and non-negative.")
+        if int(delay_range[1]) >= self.cfg.domain_rand.action_buf_len:
+            raise ValueError("action_delay_range exceeds the action history buffer.")
+        self.action_delay_steps = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.long
+        )
         self.contact_buf = torch.zeros(self.num_envs, self.cfg.env.contact_buf_len, 4, device=self.device, dtype=torch.float)
 
         self.commands = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=torch.float, device=self.device, requires_grad=False) # x vel, y vel, yaw vel, heading
@@ -960,7 +1044,6 @@ class LeggedRobot(BaseTask):
                 cam_y = np.random.normal(config.position['mean'][1], config.position['std'][1])
                 cam_z = np.random.normal(config.position['mean'][2], config.position['std'][2])
                 local_transform.p = gymapi.Vec3(cam_x, cam_y, cam_z)
-                print('Camera position: ', cam_x, cam_y, cam_z)
                 # print('Camera position has been randomized.')
             else:
                 camera_position = np.copy(config.position)
@@ -975,7 +1058,7 @@ class LeggedRobot(BaseTask):
                         config.rotation["upper"][1] - config.rotation["lower"][1]) + config.rotation["lower"][1]
                     cam_yaw = np.random.uniform(0, 1) * (
                         config.rotation["upper"][2] - config.rotation["lower"][2]) + config.rotation["lower"][2]
-                    local_transform.r = gymapi.Quat.from_euler_zyx(cam_roll, cam_pitch, cam_yaw)
+                    local_transform.r = gymapi.Quat.from_euler_zyx(cam_yaw, cam_pitch, cam_roll)
                 # print('Camera rotation has been randomized.')
             else:
                 camera_angle = np.random.uniform(config.angle[0], config.angle[1])
@@ -1060,7 +1143,10 @@ class LeggedRobot(BaseTask):
             env_handle = self.gym.create_env(self.sim, env_lower, env_upper, int(np.sqrt(self.num_envs)))
             pos = self.env_origins[i].clone()
             if self.cfg.env.randomize_start_pos:
-                pos[:2] += torch_rand_float(-1., 1., (2,1), device=self.device).squeeze(1)
+                start_pos_range = getattr(self.cfg.env, "start_pos_range", [1.0, 1.0])
+                pos[:2] += torch_rand_float(
+                    -1., 1., (2, 1), device=self.device
+                ).squeeze(1) * torch.tensor(start_pos_range, device=self.device)
             if self.cfg.env.randomize_start_yaw:
                 rand_yaw_quat = gymapi.Quat.from_euler_zyx(0., 0., self.cfg.env.rand_yaw_range*np.random.uniform(-1, 1))
                 start_pose.r = rand_yaw_quat
@@ -1247,11 +1333,38 @@ class LeggedRobot(BaseTask):
 
         self.num_height_points = grid_x.numel()
         points = torch.zeros(self.num_envs, self.num_height_points, 3, device=self.device, requires_grad=False)
-        for i in range(self.num_envs):
-            offset = torch_rand_float(-self.cfg.terrain.measure_horizontal_noise, self.cfg.terrain.measure_horizontal_noise, (self.num_height_points,2), device=self.device).squeeze()
-            xy_noise = torch_rand_float(-self.cfg.terrain.measure_horizontal_noise, self.cfg.terrain.measure_horizontal_noise, (self.num_height_points,2), device=self.device).squeeze() + offset
-            points[i, :, 0] = grid_x.flatten() + xy_noise[:, 0]
-            points[i, :, 1] = grid_y.flatten() + xy_noise[:, 1]
+        base_grid = torch.stack((grid_x.flatten(), grid_y.flatten()), dim=-1)
+        offset_range = getattr(self.cfg.terrain, "measure_horizontal_offset", None)
+        jitter_range = getattr(self.cfg.terrain, "measure_point_jitter", None)
+        if offset_range is None and jitter_range is None:
+            # Preserve the original two-sample point noise for existing tasks.
+            legacy_range = float(self.cfg.terrain.measure_horizontal_noise)
+            first_noise = torch_rand_float(
+                -legacy_range,
+                legacy_range,
+                (self.num_envs * self.num_height_points, 2),
+                device=self.device,
+            ).view(self.num_envs, self.num_height_points, 2)
+            second_noise = torch_rand_float(
+                -legacy_range,
+                legacy_range,
+                (self.num_envs * self.num_height_points, 2),
+                device=self.device,
+            ).view(self.num_envs, self.num_height_points, 2)
+            points[:, :, :2] = base_grid.unsqueeze(0) + first_noise + second_noise
+        else:
+            offset_range = float(offset_range or 0.0)
+            jitter_range = float(jitter_range or 0.0)
+            env_offsets = torch_rand_float(
+                -offset_range, offset_range, (self.num_envs, 2), device=self.device
+            ).unsqueeze(1)
+            point_jitter = torch_rand_float(
+                -jitter_range,
+                jitter_range,
+                (self.num_envs * self.num_height_points, 2),
+                device=self.device,
+            ).view(self.num_envs, self.num_height_points, 2)
+            points[:, :, :2] = base_grid.unsqueeze(0) + env_offsets + point_jitter
         return points
 
     def get_foot_contacts(self):

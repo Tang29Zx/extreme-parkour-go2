@@ -39,6 +39,12 @@ from pydelatin import Delatin
 import pyfqmr
 from scipy.ndimage import binary_dilation
 
+from legged_gym.utils.five_box_terrain import build_five_box_terrain
+from legged_gym.utils.random_box_terrain import (
+    build_random_box_terrain,
+    select_roughness_range,
+)
+
 
 class Terrain:
     def __init__(self, cfg: LeggedRobotCfg.terrain, num_robots) -> None:
@@ -58,6 +64,8 @@ class Terrain:
         # self.env_slope_vec = np.zeros((cfg.num_rows, cfg.num_cols, 3))
         self.goals = np.zeros((cfg.num_rows, cfg.num_cols, cfg.num_goals, 3))
         self.num_goals = cfg.num_goals
+        self._five_box_layout_counter = 0
+        self._random_box_layout_counter = 0
 
         self.width_per_env_pixels = int(self.env_width / cfg.horizontal_scale)
         self.length_per_env_pixels = int(self.env_length / cfg.horizontal_scale)
@@ -144,9 +152,12 @@ class Terrain:
             eval(terrain_type)(terrain, **self.cfg.terrain_kwargs.terrain_kwargs)
             self.add_terrain_to_map(terrain, i, j)
     
-    def add_roughness(self, terrain, difficulty=1):
-        max_height = (self.cfg.height[1] - self.cfg.height[0]) * difficulty + self.cfg.height[0]
-        height = random.uniform(self.cfg.height[0], max_height)
+    def add_roughness(self, terrain, difficulty=1, height_range=None):
+        height_range = self.cfg.height if height_range is None else height_range
+        max_height = (height_range[1] - height_range[0]) * difficulty + height_range[0]
+        height = random.uniform(height_range[0], max_height)
+        if height <= 0.0:
+            return
         terrain_utils.random_uniform_terrain(terrain, min_height=-height, max_height=height, step=0.005, downsampled_scale=self.cfg.downsampled_scale)
 
     def make_terrain(self, choice, difficulty):
@@ -321,6 +332,27 @@ class Terrain:
             idx = 20
             demo_terrain(terrain)
             self.add_roughness(terrain)
+        elif len(self.proportions) > 20 and choice < self.proportions[20]:
+            idx = 21
+            layout_count = int(self.cfg.five_box_kwargs["num_unique_layouts"])
+            layout_index = self._five_box_layout_counter % layout_count
+            build_five_box_terrain(terrain, self.cfg, layout_index)
+            self._five_box_layout_counter += 1
+        elif len(self.proportions) > 21 and choice < self.proportions[21]:
+            idx = 22
+            layout_count = int(self.cfg.random_box_kwargs["num_unique_layouts"])
+            layout_index = self._random_box_layout_counter % layout_count
+            build_random_box_terrain(terrain, self.cfg, layout_index)
+            roughness_range, roughness_class = select_roughness_range(
+                self.cfg.random_box_kwargs["seed"],
+                layout_count,
+                self.cfg.random_box_kwargs["ground_roughness_distributions"],
+                layout_index,
+            )
+            self.add_roughness(terrain, height_range=roughness_range)
+            terrain.roughness_class = roughness_class
+            terrain.roughness_range = roughness_range
+            self._random_box_layout_counter += 1
         # np.set_printoptions(precision=2)
         # print(np.array(self.proportions), choice)
         terrain.idx = idx
@@ -337,13 +369,19 @@ class Terrain:
         self.height_field_raw[start_x: end_x, start_y:end_y] = terrain.height_field_raw
 
         # env_origin_x = (i + 0.5) * self.env_length
-        env_origin_x = i * self.env_length + 1.0
-        env_origin_y = (j + 0.5) * self.env_width
+        if hasattr(terrain, "env_origin"):
+            env_origin_x = i * self.env_length + float(terrain.env_origin[0])
+            env_origin_y = j * self.env_width + float(terrain.env_origin[1])
+        else:
+            env_origin_x = i * self.env_length + 1.0
+            env_origin_y = (j + 0.5) * self.env_width
         x1 = int((self.env_length/2. - 0.5) / terrain.horizontal_scale) # within 1 meter square range
         x2 = int((self.env_length/2. + 0.5) / terrain.horizontal_scale)
         y1 = int((self.env_width/2. - 0.5) / terrain.horizontal_scale)
         y2 = int((self.env_width/2. + 0.5) / terrain.horizontal_scale)
-        if self.cfg.origin_zero_z:
+        if hasattr(terrain, "env_origin"):
+            env_origin_z = float(terrain.env_origin[2])
+        elif self.cfg.origin_zero_z:
             env_origin_z = 0
         else:
             env_origin_z = np.max(terrain.height_field_raw[x1:x2, y1:y2])*terrain.vertical_scale

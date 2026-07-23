@@ -39,35 +39,35 @@
         "max_curriculum": 1.0,
         "max_ranges": {
             "ang_vel_yaw": [
-                0,
-                0
+                0.0,
+                0.0
             ],
             "heading": [
-                -1.6,
-                1.6
+                0.0,
+                0.0
             ],
             "lin_vel_x": [
-                0.3,
-                0.8
+                0.5,
+                0.5
             ],
             "lin_vel_y": [
-                -0.3,
-                0.3
+                0.0,
+                0.0
             ]
         },
         "num_commands": 4,
         "ranges": {
             "ang_vel_yaw": [
-                0,
-                0
+                0.0,
+                0.0
             ],
             "heading": [
-                0,
-                0
+                0.0,
+                0.0
             ],
             "lin_vel_x": [
-                0.0,
-                1.5
+                0.5,
+                0.5
             ],
             "lin_vel_y": [
                 0.0,
@@ -146,20 +146,20 @@
         ],
         "delay_update_global_steps": 192000,
         "friction_range": [
-            0.6,
-            2.0
+            1.0,
+            1.0
         ],
         "max_push_vel_xy": 0.5,
         "motor_strength_range": [
-            0.8,
-            1.2
+            1.0,
+            1.0
         ],
         "push_interval_s": 6,
         "push_robots": false,
         "randomize_base_com": false,
         "randomize_base_mass": false,
         "randomize_friction": true,
-        "randomize_motor": true
+        "randomize_motor": false
     },
     "env": {
         "contact_buf_len": 100,
@@ -267,7 +267,7 @@
         ]
     },
     "noise": {
-        "add_noise": true,
+        "add_noise": false,
         "noise_level": 1.0,
         "noise_scales": {
             "ang_vel": 0.05,
@@ -351,21 +351,87 @@
         "downsampled_scale": 0.075,
         "dynamic_friction": 1.0,
         "edge_width_thresh": 0.05,
+        "five_box_kwargs": {
+            "seed": 0,
+            "num_unique_layouts": 4,
+            "spawn_margin": 0.6,
+            "first_gap_range": [
+                0.8,
+                1.2
+            ],
+            "gap_distributions": [
+                {
+                    "range": [
+                        0.45,
+                        0.75
+                    ],
+                    "weight": 0.2
+                },
+                {
+                    "range": [
+                        0.75,
+                        1.2
+                    ],
+                    "weight": 0.6
+                },
+                {
+                    "range": [
+                        1.2,
+                        1.6
+                    ],
+                    "weight": 0.2
+                }
+            ],
+            "high_box_threshold": 0.4,
+            "post_high_min_gap": 0.8,
+            "exit_goal_distance": 1.0,
+            "boxes": [
+                {
+                    "length": 1.2,
+                    "width": 1.2,
+                    "height": 0.2
+                },
+                {
+                    "length": 1.2,
+                    "width": 1.2,
+                    "height": 0.3
+                },
+                {
+                    "length": 1.2,
+                    "width": 1.2,
+                    "height": 0.4
+                },
+                {
+                    "length": 1.2,
+                    "width": 1.2,
+                    "height": 0.4
+                },
+                {
+                    "length": 1.2,
+                    "width": 1.2,
+                    "height": 0.4,
+                    "gap_range": [
+                        1.6,
+                        2.0
+                    ]
+                }
+            ]
+        },
         "gap_size": [
             0.02,
             0.1
         ],
         "height": [
-            0.02,
-            0.02
+            0.0,
+            0.0
         ],
         "hf2mesh_method": "grid",
         "horizontal_scale": 0.05,
         "horizontal_scale_camera": 0.1,
-        "max_difficulty": true,
+        "max_difficulty": false,
         "max_error": 0.1,
         "max_error_camera": 2,
-        "max_init_terrain_level": 5,
+        "max_init_terrain_level": 3,
         "measure_heights": true,
         "measure_horizontal_noise": 0.0,
         "measured_points_x": [
@@ -397,9 +463,9 @@
         ],
         "mesh_type": "trimesh",
         "no_flat": true,
-        "num_cols": 5,
-        "num_goals": 8,
-        "num_rows": 5,
+        "num_cols": 4,
+        "num_goals": 6,
+        "num_rows": 4,
         "origin_zero_z": true,
         "restitution": 0.0,
         "selected": false,
@@ -419,18 +485,19 @@
             "discrete": 0.0,
             "stepping stones": 0.0,
             "gaps": 0.0,
-            "smooth flat": 0,
+            "smooth flat": 0.0,
             "pit": 0.0,
             "wall": 0.0,
             "platform": 0.0,
             "large stairs up": 0.0,
             "large stairs down": 0.0,
-            "parkour": 0.2,
-            "parkour_hurdle": 0.2,
+            "parkour": 0.0,
+            "parkour_hurdle": 0.0,
             "parkour_flat": 0.0,
-            "parkour_step": 0.2,
-            "parkour_gap": 0.2,
-            "demo": 0.2
+            "parkour_step": 0.0,
+            "parkour_gap": 0.0,
+            "demo": 0.0,
+            "five_box": 1.0
         },
         "terrain_kwargs": null,
         "terrain_length": 18.0,
@@ -443,20 +510,21 @@
             0.0,
             0.0,
             0.0,
-            0,
             0.0,
             0.0,
             0.0,
             0.0,
             0.0,
-            0.2,
-            0.2,
             0.0,
-            0.2,
-            0.2,
-            0.2
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0
         ],
-        "terrain_width": 4,
+        "terrain_width": 2.0,
         "vertical_scale": 0.005,
         "y_range": [
             -0.4,
@@ -465,14 +533,14 @@
     },
     "viewer": {
         "lookat": [
-            11.0,
-            5,
-            3.0
+            7.0,
+            0.0,
+            0.3
         ],
         "pos": [
-            10,
-            0,
-            6
+            4.0,
+            -5.0,
+            3.0
         ],
         "ref_env": 0
     }

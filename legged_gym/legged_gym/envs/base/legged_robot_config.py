@@ -69,6 +69,7 @@ class LeggedRobotCfg(BaseConfig):
         include_foot_contacts = True
         
         randomize_start_pos = False
+        start_pos_range = [0.3, 0.3]
         randomize_start_vel = False
         randomize_start_yaw = False
         rand_yaw_range = 1.2
@@ -76,6 +77,7 @@ class LeggedRobotCfg(BaseConfig):
         rand_y_range = 0.5
         randomize_start_pitch = False
         rand_pitch_range = 1.6
+        dof_pos_reset_range = [0.0, 0.9]
 
         contact_buf_len = 100
 
@@ -119,8 +121,10 @@ class LeggedRobotCfg(BaseConfig):
         clip_actions = 1.2
     class noise:
         add_noise = False
+        apply_observation_noise = False
         noise_level = 1.0 # scales other values
         quantize_height = True
+        contact_dropout_prob = 0.0
         class noise_scales:
             rotation = 0.0
             dof_pos = 0.01
@@ -128,6 +132,7 @@ class LeggedRobotCfg(BaseConfig):
             lin_vel = 0.05
             ang_vel = 0.05
             gravity = 0.02
+            goal_yaw = 0.0
             height_measurements = 0.02
 
     class terrain:
@@ -160,6 +165,8 @@ class LeggedRobotCfg(BaseConfig):
         measured_points_x = [-0.45, -0.3, -0.15, 0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.05, 1.2] # 1mx1.6m rectangle (without center line)
         measured_points_y = [-0.75, -0.6, -0.45, -0.3, -0.15, 0., 0.15, 0.3, 0.45, 0.6, 0.75]
         measure_horizontal_noise = 0.0
+        measure_horizontal_offset = None
+        measure_point_jitter = None
 
         selected = False # select a unique terrain type and pass all arguments
         terrain_kwargs = None # Dict of arguments for selected terrain
@@ -284,6 +291,7 @@ class LeggedRobotCfg(BaseConfig):
 
         delay_update_global_steps = 24 * 8000
         action_delay = False
+        action_delay_range = [0, 0]
         action_curr_step = [1, 1]
         action_curr_step_scratch = [0, 1]
         action_delay_view = 1

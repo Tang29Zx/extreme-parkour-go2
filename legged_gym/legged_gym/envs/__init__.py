@@ -42,6 +42,12 @@ from .cassie.cassie_config import CassieRoughCfg, CassieRoughCfgPPO
 from .a1.a1_config import A1RoughCfg, A1RoughCfgPPO
 from .a1.a1_parkour_config import A1ParkourCfg, A1ParkourCfgPPO
 from .go2.go2_parkour_config import Go2ParkourCfg, Go2ParkourCfgPPO
+from .go2.go2_five_box_config import Go2FiveBoxCfg, Go2FiveBoxCfgPPO
+from .go2.go2_random_box_config import Go2RandomBoxCfg, Go2RandomBoxCfgPPO
+from .go2.go2_random_box_clean_config import (
+    Go2RandomBoxCleanCfg,
+    Go2RandomBoxCleanCfgPPO,
+)
 from .go1.go1_config import Go1RoughCfg, Go1RoughCfgPPO
 
 import os
@@ -55,3 +61,21 @@ from legged_gym.utils.task_registry import task_registry
 task_registry.register( "a1", LeggedRobot, A1ParkourCfg(), A1ParkourCfgPPO() )
 task_registry.register( "go1", LeggedRobot, Go1RoughCfg(), Go1RoughCfgPPO() )
 task_registry.register( "go2", LeggedRobot, Go2ParkourCfg(), Go2ParkourCfgPPO() )
+task_registry.register(
+    "go2_five_box",
+    LeggedRobot,
+    Go2FiveBoxCfg(),
+    Go2FiveBoxCfgPPO(),
+)
+task_registry.register(
+    "go2_random_box",
+    LeggedRobot,
+    Go2RandomBoxCfg(),
+    Go2RandomBoxCfgPPO(),
+)
+task_registry.register(
+    "go2_random_box_clean",
+    LeggedRobot,
+    Go2RandomBoxCleanCfg(),
+    Go2RandomBoxCleanCfgPPO(),
+)
