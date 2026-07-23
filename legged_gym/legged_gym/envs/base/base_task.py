@@ -38,7 +38,15 @@ import time
 # Base class for RL tasks
 class BaseTask():
 
-    def __init__(self, cfg, sim_params, physics_engine, sim_device, headless):
+    def __init__(
+        self,
+        cfg,
+        sim_params,
+        physics_engine,
+        sim_device,
+        headless,
+        graphics_device_id=None,
+    ):
         self.gym = gymapi.acquire_gym()
 
         self.sim_params = sim_params
@@ -54,8 +62,12 @@ class BaseTask():
             self.device = 'cpu'
 
         # graphics device for rendering, -1 for no rendering
-        self.graphics_device_id = self.sim_device_id
-        if self.headless == True:
+        self.graphics_device_id = (
+            self.sim_device_id
+            if graphics_device_id is None
+            else int(graphics_device_id)
+        )
+        if self.headless == True and not cfg.depth.use_camera:
             self.graphics_device_id = -1
 
         self.num_envs = cfg.env.num_envs

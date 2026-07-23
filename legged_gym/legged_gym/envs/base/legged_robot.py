@@ -78,7 +78,15 @@ def euler_from_quaternion(quat_angle):
         return roll_x, pitch_y, yaw_z # in radians
 
 class LeggedRobot(BaseTask):
-    def __init__(self, cfg: LeggedRobotCfg, sim_params, physics_engine, sim_device, headless):
+    def __init__(
+        self,
+        cfg: LeggedRobotCfg,
+        sim_params,
+        physics_engine,
+        sim_device,
+        headless,
+        graphics_device_id=None,
+    ):
         """ Parses the provided config file,
             calls create_sim() (which creates, simulation, terrain and environments),
             initilizes pytorch buffers used during training
@@ -97,7 +105,14 @@ class LeggedRobot(BaseTask):
         self.debug_viz = True
         self.init_done = False
         self._parse_cfg(self.cfg)
-        super().__init__(self.cfg, sim_params, physics_engine, sim_device, headless)
+        super().__init__(
+            self.cfg,
+            sim_params,
+            physics_engine,
+            sim_device,
+            headless,
+            graphics_device_id,
+        )
 
         self.resize_transform = torchvision.transforms.Resize((self.cfg.depth.resized[1], self.cfg.depth.resized[0]), 
                                                               interpolation=torchvision.transforms.InterpolationMode.BICUBIC)
@@ -572,8 +587,11 @@ class LeggedRobot(BaseTask):
         """ Creates simulation, terrain and evironments
         """
         self.up_axis_idx = 2 # 2 for z, 1 for y -> adapt gravity accordingly
-        if self.cfg.depth.use_camera:
-            self.graphics_device_id = self.sim_device_id  # required in headless mode
+        print(
+            "Creating simulation with "
+            f"compute_device_id={self.sim_device_id}, "
+            f"graphics_device_id={self.graphics_device_id}"
+        )
         self.sim = self.gym.create_sim(self.sim_device_id, self.graphics_device_id, self.physics_engine, self.sim_params)
         mesh_type = self.cfg.terrain.mesh_type
         start = time()

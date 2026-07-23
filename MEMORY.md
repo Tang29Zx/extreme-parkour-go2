@@ -89,10 +89,13 @@
   独立`depth_encoder_loss`被注释，因此显示0属预期；应监控depth actor loss、
   yaw loss、delta-yaw正确率和任务表现。使用`--no_wandb`时需用`tee`保存终端
   输出，否则没有可供后续分析的训练曲线。
-- 服务器相机模式需要PhysX计算设备与Vulkan图形设备使用同一物理GPU。不能
-  用`CUDA_VISIBLE_DEVICES=1`再传`cuda:0`；应取消CUDA隐藏并明确传`cuda:1`，
-  否则可能在`gym.create_sim()`直接段错误。随机箱相机地形的Delatin误差固定
-  为`0.01 m`，防止继承原配置的`max_error_camera=2 m`后改变箱体几何。
+- 服务器相机模式需要PhysX计算设备与Vulkan图形设备使用同一物理GPU；CUDA
+  设备编号和Vulkan设备编号不保证一致。项目原先虽然解析
+  `--graphics_device_id`，但没有传入环境，参数实际无效；现已接通并在
+  `gym.create_sim()`前打印compute/graphics编号。多GPU相机模式应先用
+  `vulkaninfo`确认Vulkan编号，再分别传`--device cuda:N`和
+  `--graphics_device_id K`。随机箱相机地形的Delatin误差固定为`0.01 m`，
+  防止继承原配置的`max_error_camera=2 m`后改变箱体几何。
 - 推荐路径是先用最终 teacher policy 蒸馏得到深度相机 student，再导出匹配的
   base JIT 与 vision weights。teacher policy、视觉编码器与导出权重必须来自
   同一训练版本，不能把旧视觉权重和后续修改过的 Actor 混用。
