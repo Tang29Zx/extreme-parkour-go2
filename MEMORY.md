@@ -19,6 +19,9 @@
 - `play.py` 原本硬编码作者机器日志路径，已改为相对
   `LEGGED_GYM_ROOT_DIR`。
 - `train.py` 原本启动后等待 debugpy，已移除该阻塞。
+- `OnPolicyRunner` 原本不更新或恢复 `current_learning_iteration`，导致每次续训
+  都从 `model_0.pt` 重新编号并在结束时覆盖它。现在新适配任务可从本地0开始，
+  checkpoint记录完成轮数；后续从该checkpoint恢复时继续编号和保存。
 - `rsl_rl/modules/estimator.py` 的无用 turtle 导入会要求 Tk，已移除。
 - Docker 脚本使用 `EXTREME_GO2_IMAGE_NAME`，避免被其他项目的
   `IMAGE_NAME` 环境变量覆盖。

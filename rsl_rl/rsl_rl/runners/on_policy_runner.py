@@ -47,6 +47,15 @@ import sys
 from copy import copy, deepcopy
 import warnings
 
+
+def _checkpoint_interval(run_iteration, base_interval):
+    if run_iteration <= 2500:
+        return base_interval
+    if run_iteration <= 5000:
+        return 2 * base_interval
+    return 5 * base_interval
+
+
 class OnPolicyRunner:
 
     def __init__(self,
@@ -183,6 +192,7 @@ class OnPolicyRunner:
 
         tot_iter = self.current_learning_iteration + num_learning_iterations
         self.start_learning_iteration = copy(self.current_learning_iteration)
+        last_saved_iteration = None
 
         for it in range(self.current_learning_iteration, tot_iter):
             start = time.time()
@@ -244,19 +254,25 @@ class OnPolicyRunner:
             learn_time = stop - start
             if self.log_dir is not None:
                 self.log(locals())
-            if it < 2500:
-                if it % self.save_interval == 0:
-                    self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(it)))
-            elif it < 5000:
-                if it % (2*self.save_interval) == 0:
-                    self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(it)))
-            else:
-                if it % (5*self.save_interval) == 0:
-                    self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(it)))
+            completed_iteration = it + 1
+            run_iteration = completed_iteration - self.start_learning_iteration
+            save_interval = _checkpoint_interval(
+                run_iteration, self.save_interval
+            )
+            if run_iteration % save_interval == 0:
+                self.save(
+                    os.path.join(self.log_dir, 'model_{}.pt'.format(completed_iteration)),
+                    iteration=completed_iteration,
+                )
+                last_saved_iteration = completed_iteration
             ep_infos.clear()
-        
-        # self.current_learning_iteration += num_learning_iterations
-        self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(self.current_learning_iteration)))
+
+        self.current_learning_iteration = tot_iter
+        if last_saved_iteration != tot_iter:
+            self.save(
+                os.path.join(self.log_dir, 'model_{}.pt'.format(tot_iter)),
+                iteration=tot_iter,
+            )
 
     def learn_vision(self, num_learning_iterations, init_at_random_ep_len=False):
         tot_iter = self.current_learning_iteration + num_learning_iterations
@@ -277,6 +293,7 @@ class OnPolicyRunner:
         self.alg.depth_actor.train()
 
         num_pretrain_iter = 0
+        last_saved_iteration = None
         for it in range(self.current_learning_iteration, tot_iter):
             start = time.time()
             depth_latent_buffer = []
@@ -369,11 +386,25 @@ class OnPolicyRunner:
 
             if self.log_dir is not None:
                 self.log_vision(locals())
-            if (it-self.start_learning_iteration < 2500 and it % self.save_interval == 0) or \
-               (it-self.start_learning_iteration < 5000 and it % (2*self.save_interval) == 0) or \
-               (it-self.start_learning_iteration >= 5000 and it % (5*self.save_interval) == 0):
-                    self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(it)))
+            completed_iteration = it + 1
+            run_iteration = completed_iteration - self.start_learning_iteration
+            save_interval = _checkpoint_interval(
+                run_iteration, self.save_interval
+            )
+            if run_iteration % save_interval == 0:
+                self.save(
+                    os.path.join(self.log_dir, 'model_{}.pt'.format(completed_iteration)),
+                    iteration=completed_iteration,
+                )
+                last_saved_iteration = completed_iteration
             ep_infos.clear()
+
+        self.current_learning_iteration = tot_iter
+        if last_saved_iteration != tot_iter:
+            self.save(
+                os.path.join(self.log_dir, 'model_{}.pt'.format(tot_iter)),
+                iteration=tot_iter,
+            )
     
     def log_vision(self, locs, width=80, pad=35):
         self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
@@ -535,12 +566,15 @@ class OnPolicyRunner:
                        f"""{'ETA:':>{pad}} {mins:.0f} mins {secs:.1f} s\n""")
         print(log_string)
 
-    def save(self, path, infos=None):
+    def save(self, path, infos=None, iteration=None):
+        checkpoint_iteration = (
+            self.current_learning_iteration if iteration is None else int(iteration)
+        )
         state_dict = {
             'model_state_dict': self.alg.actor_critic.state_dict(),
             'estimator_state_dict': self.alg.estimator.state_dict(),
             'optimizer_state_dict': self.alg.optimizer.state_dict(),
-            'iter': self.current_learning_iteration,
+            'iter': checkpoint_iteration,
             'infos': infos,
             }
         if self.if_depth:
@@ -568,7 +602,10 @@ class OnPolicyRunner:
                 self.alg.depth_actor.load_state_dict(self.alg.actor_critic.actor.state_dict())
         if load_optimizer:
             self.alg.optimizer.load_state_dict(loaded_dict['optimizer_state_dict'])
-        # self.current_learning_iteration = loaded_dict['iter']
+        checkpoint_iteration = int(loaded_dict.get('iter', 0))
+        if checkpoint_iteration < 0:
+            raise ValueError("Checkpoint iteration must be non-negative.")
+        self.current_learning_iteration = checkpoint_iteration
         print("*" * 80)
         return loaded_dict['infos']
 
