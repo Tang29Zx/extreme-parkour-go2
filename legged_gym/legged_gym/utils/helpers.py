@@ -156,6 +156,22 @@ def update_cfg_from_args(env_cfg, cfg_train, args):
             env_cfg.terrain.num_rows = args.rows
         if args.cols is not None:
             env_cfg.terrain.num_cols = args.cols
+        if args.random_box_layout is not None:
+            if not hasattr(env_cfg.terrain, "random_box_kwargs"):
+                raise ValueError(
+                    "--random_box_layout is only valid for random-box tasks."
+                )
+            layout_count = int(
+                env_cfg.terrain.random_box_kwargs["num_unique_layouts"]
+            )
+            if not 0 <= args.random_box_layout < layout_count:
+                raise ValueError(
+                    "--random_box_layout must be between 0 and "
+                    f"{layout_count - 1}."
+                )
+            env_cfg.terrain.random_box_kwargs["layout_index_offset"] = (
+                args.random_box_layout
+            )
         if args.delay:
             env_cfg.domain_rand.action_delay = args.delay
         if not args.delay and not args.resume and not args.use_camera and args.headless: # if train from scratch
@@ -203,6 +219,7 @@ def get_args():
 
         {"name": "--rows", "type": int, "help": "num_rows."},
         {"name": "--cols", "type": int, "help": "num_cols"},
+        {"name": "--random_box_layout", "type": int, "help": "First random-box layout index to generate."},
         {"name": "--debug", "action": "store_true", "default": False, "help": "Disable wandb logging"},
         {"name": "--proj_name", "type": str,  "default": "parkour_new", "help": "run folder name."},
         

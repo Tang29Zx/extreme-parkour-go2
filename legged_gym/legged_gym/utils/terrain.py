@@ -134,7 +134,11 @@ class Terrain:
     def curiculum(self, random=False, max_difficulty=False):
         for j in range(self.cfg.num_cols):
             for i in range(self.cfg.num_rows):
-                difficulty = i / (self.cfg.num_rows-1)
+                difficulty = (
+                    i / (self.cfg.num_rows - 1)
+                    if self.cfg.num_rows > 1
+                    else 0.0
+                )
                 choice = j / self.cfg.num_cols + 0.001
                 if random:
                     if max_difficulty:
@@ -350,7 +354,12 @@ class Terrain:
         elif len(self.proportions) > 21 and choice < self.proportions[21]:
             idx = 22
             layout_count = int(self.cfg.random_box_kwargs["num_unique_layouts"])
-            layout_index = self._random_box_layout_counter % layout_count
+            layout_index_offset = int(
+                self.cfg.random_box_kwargs.get("layout_index_offset", 0)
+            )
+            layout_index = (
+                self._random_box_layout_counter + layout_index_offset
+            ) % layout_count
             build_random_box_terrain(terrain, self.cfg, layout_index)
             roughness_range, roughness_class = select_roughness_range(
                 self.cfg.random_box_kwargs["seed"],

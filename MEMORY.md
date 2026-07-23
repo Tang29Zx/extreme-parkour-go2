@@ -22,6 +22,10 @@
 - `OnPolicyRunner` 原本不更新或恢复 `current_learning_iteration`，导致每次续训
   都从 `model_0.pt` 重新编号并在结束时覆盖它。现在新适配任务可从本地0开始，
   checkpoint记录完成轮数；后续从该checkpoint恢复时继续编号和保存。
+- 单环境回放可使用 `--rows 1 --cols 1`；单行地形的课程难度固定为0，避免
+  原公式 `i / (num_rows - 1)` 触发除零。
+- 随机箱回放支持 `--random_box_layout 0～399` 精确选择固定seed布局；综合
+  6箱数量、箱高、横向折返、短间距和强地面粗糙度，当前最复杂候选为130号。
 - `rsl_rl/modules/estimator.py` 的无用 turtle 导入会要求 Tk，已移除。
 - Docker 脚本使用 `EXTREME_GO2_IMAGE_NAME`，避免被其他项目的
   `IMAGE_NAME` 环境变量覆盖。
@@ -61,6 +65,10 @@
 - 几何适应任务 `go2_random_box_clean` 与完整随机箱任务共享几何和物理范围，
   但关闭Actor观测噪声、扫描偏移/抖动、接触丢失及动作延迟；用于从29500先
   训练300～500轮，再切换到完整Sim-to-Real随机化。
+- 首次500轮 `random_box_clean_from29500` 是由修复checkpoint迭代记录之前的
+  服务器进程生成；`model_0/100/200/300/400.pt`内部均记录iteration 0，
+  其中修改时间最晚的`model_0.pt`是训练结束权重。切换到新run时从该文件加载，
+  新版runner会重新从0正确编号。
 - 400条 `25×4 m` 随机箱赛道若使用 `0.05 m` grid mesh，会生成约1768万
   顶点和3534万三角形，并在服务器 `gym.add_triangle_mesh()` 时触发段错误。
   两个随机箱任务因此改用仓库已有的 Delatin fast mesh，最大几何误差为
