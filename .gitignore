@@ -1,0 +1,52 @@
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Python packaging and local environments
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Training, evaluation, and experiment outputs
+/legged_gym/logs/
+/rsl_rl/logs/
+/logs/
+wandb/
+runs/
+checkpoints/
+events.out.tfevents.*
+*.log
+
+# Generated media and exported runtime artifacts
+videos/
+recordings/
+exports/
+
+# Local native-extension and tool caches
+.cache/
+torch_extensions/

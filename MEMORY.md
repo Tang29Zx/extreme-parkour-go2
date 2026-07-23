@@ -12,6 +12,10 @@
 
 ## 已验证踩坑
 
+- 仓库根目录现已忽略 Python/测试/IDE/本地编译缓存以及新生成的训练日志；
+  `legged_gym` 源码目录中误提交的 `__pycache__/*.pyc` 已解除 Git 跟踪。
+  Isaac Gym `_bindings/linux-x86_64/py36` 下随 SDK 分发的 `.pyc` 保持跟踪，
+  不能用全仓库批量删除缓存的方式处理。
 - `play.py` 原本硬编码作者机器日志路径，已改为相对
   `LEGGED_GYM_ROOT_DIR`。
 - `train.py` 原本启动后等待 debugpy，已移除该阻塞。
@@ -54,6 +58,10 @@
 - 几何适应任务 `go2_random_box_clean` 与完整随机箱任务共享几何和物理范围，
   但关闭Actor观测噪声、扫描偏移/抖动、接触丢失及动作延迟；用于从29500先
   训练300～500轮，再切换到完整Sim-to-Real随机化。
+- 400条 `25×4 m` 随机箱赛道若使用 `0.05 m` grid mesh，会生成约1768万
+  顶点和3534万三角形，并在服务器 `gym.add_triangle_mesh()` 时触发段错误。
+  两个随机箱任务因此改用仓库已有的 Delatin fast mesh，最大几何误差为
+  `0.01 m`；原生任务继续使用原来的 grid mesh。
 
 ## 真机部署约束
 

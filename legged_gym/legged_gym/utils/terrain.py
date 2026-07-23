@@ -108,6 +108,15 @@ class Terrain:
             else:
                 assert cfg.hf2mesh_method == "fast", "Height field to mesh method must be grid or fast"
                 self.vertices, self.triangles = convert_heightfield_to_trimesh_delatin(self.height_field_raw, self.cfg.horizontal_scale, self.cfg.vertical_scale, max_error=cfg.max_error)
+                slope_threshold = self.cfg.slope_treshold * self.cfg.horizontal_scale / self.cfg.vertical_scale
+                height_delta_x = np.diff(self.height_field_raw, axis=0)
+                edge_offsets = np.zeros_like(self.height_field_raw, dtype=np.int8)
+                edge_offsets[:-1] += height_delta_x > slope_threshold
+                edge_offsets[1:] -= height_delta_x < -slope_threshold
+                self.x_edge_mask = edge_offsets != 0
+                half_edge_width = int(self.cfg.edge_width_thresh / self.cfg.horizontal_scale)
+                structure = np.ones((half_edge_width * 2 + 1, 1))
+                self.x_edge_mask = binary_dilation(self.x_edge_mask, structure=structure)
             print("Created {} vertices".format(self.vertices.shape[0]))
             print("Created {} triangles".format(self.triangles.shape[0]))
 
