@@ -69,6 +69,11 @@
   服务器进程生成；`model_0/100/200/300/400.pt`内部均记录iteration 0，
   其中修改时间最晚的`model_0.pt`是训练结束权重。切换到新run时从该文件加载，
   新版runner会重新从0正确编号。
+- `random_box_sim2real_from30000` 已生成编号正确的30100～30500 checkpoint；
+  全部模型及优化器张量有限。30500相对30000的Actor参数相对变化约3.0%，
+  自适应学习率最终为`1e-5`。当前runner的TensorBoard writer被注释，使用
+  `--no_wandb`时目录只保存checkpoint，不保存奖励、通过率或终止趋势；后续
+  训练若需离线分析必须保留终端输出或恢复本地指标日志。
 - 400条 `25×4 m` 随机箱赛道若使用 `0.05 m` grid mesh，会生成约1768万
   顶点和3534万三角形，并在服务器 `gym.add_triangle_mesh()` 时触发段错误。
   两个随机箱任务因此改用仓库已有的 Delatin fast mesh，最大几何误差为
@@ -78,6 +83,16 @@
 
 - `model_29500.pt` 是使用仿真地形高度扫描点的 teacher policy，不能把该
   checkpoint 原样部署到 Go2；真机没有 Isaac Gym 的 heightfield 查询。
+- 随机箱视觉蒸馏从noisy teacher `model_30500.pt`启动；相机模式默认使用
+  192环境，每轮采集120步。首次加载时depth actor复制teacher Actor，teacher
+  冻结，深度编码器和depth actor通过动作模仿与yaw损失更新。当前代码中的
+  独立`depth_encoder_loss`被注释，因此显示0属预期；应监控depth actor loss、
+  yaw loss、delta-yaw正确率和任务表现。使用`--no_wandb`时需用`tee`保存终端
+  输出，否则没有可供后续分析的训练曲线。
+- 服务器相机模式需要PhysX计算设备与Vulkan图形设备使用同一物理GPU。不能
+  用`CUDA_VISIBLE_DEVICES=1`再传`cuda:0`；应取消CUDA隐藏并明确传`cuda:1`，
+  否则可能在`gym.create_sim()`直接段错误。随机箱相机地形的Delatin误差固定
+  为`0.01 m`，防止继承原配置的`max_error_camera=2 m`后改变箱体几何。
 - 推荐路径是先用最终 teacher policy 蒸馏得到深度相机 student，再导出匹配的
   base JIT 与 vision weights。teacher policy、视觉编码器与导出权重必须来自
   同一训练版本，不能把旧视觉权重和后续修改过的 Actor 混用。

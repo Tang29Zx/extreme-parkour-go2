@@ -29,6 +29,7 @@ class Go2RandomBoxCfg(Go2ParkourCfg):
         preserve_custom_terrain_with_camera = True
         hf2mesh_method = "fast"
         max_error = 0.01
+        max_error_camera = 0.01
         horizontal_scale_camera = 0.05
         measure_horizontal_offset = 0.02
         measure_point_jitter = 0.01
