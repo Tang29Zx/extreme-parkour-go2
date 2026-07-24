@@ -48,14 +48,6 @@ from copy import copy, deepcopy
 import warnings
 
 
-def _checkpoint_interval(run_iteration, base_interval):
-    if run_iteration <= 2500:
-        return base_interval
-    if run_iteration <= 5000:
-        return 2 * base_interval
-    return 5 * base_interval
-
-
 class OnPolicyRunner:
 
     def __init__(self,
@@ -256,10 +248,7 @@ class OnPolicyRunner:
                 self.log(locals())
             completed_iteration = it + 1
             run_iteration = completed_iteration - self.start_learning_iteration
-            save_interval = _checkpoint_interval(
-                run_iteration, self.save_interval
-            )
-            if run_iteration % save_interval == 0:
+            if run_iteration % self.save_interval == 0:
                 self.save(
                     os.path.join(self.log_dir, 'model_{}.pt'.format(completed_iteration)),
                     iteration=completed_iteration,
@@ -389,10 +378,7 @@ class OnPolicyRunner:
                 self.log_vision(locals())
             completed_iteration = it + 1
             run_iteration = completed_iteration - self.start_learning_iteration
-            save_interval = _checkpoint_interval(
-                run_iteration, self.save_interval
-            )
-            if run_iteration % save_interval == 0:
+            if run_iteration % self.save_interval == 0:
                 self.save(
                     os.path.join(self.log_dir, 'model_{}.pt'.format(completed_iteration)),
                     iteration=completed_iteration,

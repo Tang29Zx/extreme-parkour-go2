@@ -48,6 +48,10 @@ from .go2.go2_random_box_clean_config import (
     Go2RandomBoxCleanCfg,
     Go2RandomBoxCleanCfgPPO,
 )
+from .go2.go2_random_box_eval_config import (
+    Go2RandomBoxEvalCfg,
+    Go2RandomBoxEvalCfgPPO,
+)
 from .go1.go1_config import Go1RoughCfg, Go1RoughCfgPPO
 
 import os
@@ -78,4 +82,10 @@ task_registry.register(
     LeggedRobot,
     Go2RandomBoxCleanCfg(),
     Go2RandomBoxCleanCfgPPO(),
+)
+task_registry.register(
+    "go2_random_box_eval",
+    LeggedRobot,
+    Go2RandomBoxEvalCfg(),
+    Go2RandomBoxEvalCfgPPO(),
 )

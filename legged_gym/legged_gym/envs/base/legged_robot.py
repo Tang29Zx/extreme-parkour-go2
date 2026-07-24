@@ -328,6 +328,11 @@ class LeggedRobot(BaseTask):
 
         if self.global_counter % self.cfg.depth.update_interval != 0:
             return
+        # Viewer debug lines persist across frames and are visible to camera
+        # sensors on the next render. Clear them before capture so goal and
+        # contact markers remain human-only overlays.
+        if getattr(self, "viewer", None) is not None:
+            self.gym.clear_lines(self.viewer)
         self.gym.step_graphics(self.sim) # required to render in headless mode
         self.gym.render_all_camera_sensors(self.sim)
 
@@ -480,6 +485,7 @@ class LeggedRobot(BaseTask):
         self.reset_buf |= roll_cutoff
         self.reset_buf |= pitch_cutoff
         self.reset_buf |= height_cutoff
+        self.reset_buf |= self.manual_reset_buf
 
     def reset_idx(self, env_ids):
         """ Reset some environments.
@@ -518,6 +524,7 @@ class LeggedRobot(BaseTask):
         self.obs_history_buf[env_ids, :, :] = 0.  # reset obs history buffer TODO no 0s
         self.contact_buf[env_ids, :, :] = 0.
         self.action_history_buf[env_ids, :, :] = 0.
+        self.manual_reset_buf[env_ids] = False
         if self.cfg.domain_rand.action_delay:
             delay_range = self.cfg.domain_rand.action_delay_range
             self.action_delay_steps[env_ids] = torch.randint(

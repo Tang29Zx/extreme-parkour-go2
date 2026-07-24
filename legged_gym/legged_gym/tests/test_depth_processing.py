@@ -243,6 +243,58 @@ class DepthProcessingTest(unittest.TestCase):
             ),
         )
 
+    def test_viewer_debug_lines_are_cleared_before_camera_render(self):
+        calls = []
+
+        class FakeGym:
+            def clear_lines(self, viewer):
+                calls.append(("clear_lines", viewer))
+
+            def step_graphics(self, sim):
+                calls.append(("step_graphics", sim))
+
+            def render_all_camera_sensors(self, sim):
+                calls.append(("render", sim))
+
+            def get_camera_image(
+                self, sim, env_handle, camera_handle, image_type
+            ):
+                calls.append(("read", env_handle))
+                return np.full((2, 3), -1.0, dtype=np.float32)
+
+        robot = object.__new__(LeggedRobot)
+        robot.cfg = SimpleNamespace(
+            depth=SimpleNamespace(
+                use_camera=True,
+                use_gpu_tensor=False,
+                update_interval=1,
+                buffer_len=1,
+            )
+        )
+        robot.global_counter = 1
+        robot.num_envs = 1
+        robot.device = "cpu"
+        robot.sim = "sim"
+        robot.viewer = "viewer"
+        robot.gym = FakeGym()
+        robot.envs = [0]
+        robot.cam_handles = [0]
+        robot.episode_length_buf = torch.tensor([0])
+        robot.depth_buffer = torch.zeros(1, 1, 2, 3)
+        robot.process_depth_images = lambda depth_images: depth_images
+
+        LeggedRobot.update_depth_buffer(robot)
+
+        self.assertEqual(
+            calls,
+            [
+                ("clear_lines", "viewer"),
+                ("step_graphics", "sim"),
+                ("render", "sim"),
+                ("read", 0),
+            ],
+        )
+
 
 class DepthRecurrentStateTest(unittest.TestCase):
     def test_reset_clears_only_completed_environment_state(self):

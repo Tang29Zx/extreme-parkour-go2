@@ -85,6 +85,9 @@ class BaseTask():
         self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         self.time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        self.manual_reset_buf = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.bool
+        )
         print(self.obs_buf)
         if self.num_privileged_obs is not None:
             self.privileged_obs_buf = torch.zeros(self.num_envs, self.num_privileged_obs, device=self.device, dtype=torch.float)
@@ -130,6 +133,8 @@ class BaseTask():
                 self.viewer, gymapi.KEY_A, "left_turn")
             self.gym.subscribe_viewer_keyboard_event(
                 self.viewer, gymapi.KEY_D, "right_turn")
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_R, "reset_env")
         self.free_cam = False
         self.lookat_id = 0
         self.lookat_vec = torch.tensor([-0, 2, 1], requires_grad=False, device=self.device)
@@ -149,6 +154,10 @@ class BaseTask():
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         obs, privileged_obs, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
         return obs, privileged_obs
+
+    def request_manual_reset(self, env_id):
+        """Schedule one environment for reset through the normal step path."""
+        self.manual_reset_buf[int(env_id)] = True
 
     def step(self, actions):
         raise NotImplementedError
@@ -195,6 +204,9 @@ class BaseTask():
                     self.free_cam = not self.free_cam
                     if self.free_cam:
                         self.set_camera(self.cfg.viewer.pos, self.cfg.viewer.lookat)
+
+                if evt.action == "reset_env" and evt.value > 0:
+                    self.request_manual_reset(self.lookat_id)
                 
                 if evt.action == "pause" and evt.value > 0:
                     self.pause = True

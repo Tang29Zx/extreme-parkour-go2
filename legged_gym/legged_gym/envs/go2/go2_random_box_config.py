@@ -112,7 +112,6 @@ class Go2RandomBoxCfg(Go2ParkourCfg):
     class depth(Go2ParkourCfg.depth):
         camera_terrain_num_rows = 10
         camera_terrain_num_cols = 40
-        far_clip = 3.0
         position = {
             "mean": [0.355, 0.0, 0.065],
             "std": [0.015, 0.01, 0.015],
@@ -127,9 +126,6 @@ class Go2RandomBoxCfg(Go2ParkourCfg):
         depth_dropout_prob = 0.01
         depth_occlusion_prob = 0.30
         depth_occlusion_size_range = [0.05, 0.15]
-        far_distance_noise_start = 2.0
-        far_distance_gaussian_std = 0.02
-        far_distance_dropout_prob = 0.03
 
     class viewer(Go2ParkourCfg.viewer):
         pos = [5.0, -7.0, 4.0]

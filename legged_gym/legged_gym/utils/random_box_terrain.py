@@ -12,6 +12,14 @@ def _aligned_sample(rng, value_range, scale):
     return float(rng.integers(lower_cell, upper_cell + 1) * scale)
 
 
+def _aligned_fixed(value, scale):
+    cell = int(round(float(value) / scale))
+    aligned = float(cell * scale)
+    if not np.isclose(aligned, float(value), atol=1e-8):
+        raise ValueError("A fixed override must align with the terrain grid.")
+    return aligned
+
+
 def _balanced_box_counts(seed, layout_count, minimum, maximum):
     choices = np.arange(int(minimum), int(maximum) + 1, dtype=np.int64)
     if layout_count < len(choices):
@@ -32,6 +40,39 @@ def _sample_gap(rng, distributions, scale):
     weights /= weights.sum()
     selected = int(rng.choice(len(distributions), p=weights))
     return _aligned_sample(rng, distributions[selected]["range"], scale), selected
+
+
+def _get_indexed_override(overrides, index):
+    if not overrides:
+        return None
+    return overrides.get(index, overrides.get(str(index)))
+
+
+def resolve_random_box_layout(kwargs, layout_index):
+    """Resolve an optional logical layout to another seeded source layout."""
+
+    logical_layout_count = int(kwargs["num_unique_layouts"])
+    if logical_layout_count <= 0:
+        raise ValueError("num_unique_layouts must be positive.")
+    logical_layout_index = int(layout_index) % logical_layout_count
+    preset = _get_indexed_override(
+        kwargs.get("layout_presets"), logical_layout_index
+    )
+    if preset is None:
+        return kwargs, logical_layout_index
+
+    resolved_kwargs = dict(kwargs)
+    resolved_kwargs.pop("layout_presets", None)
+    preset = dict(preset)
+    source_layout_index = int(
+        preset.pop("source_layout_index", logical_layout_index)
+    )
+    resolved_kwargs.update(preset)
+
+    source_layout_count = int(resolved_kwargs["num_unique_layouts"])
+    if source_layout_count <= 0:
+        raise ValueError("A layout preset must have a positive layout count.")
+    return resolved_kwargs, source_layout_index % source_layout_count
 
 
 def select_roughness_range(seed, layout_count, distributions, layout_index):
@@ -61,15 +102,15 @@ def select_roughness_range(seed, layout_count, distributions, layout_index):
 def build_random_box_terrain(terrain, cfg, layout_index):
     """Fill one SubTerrain with one deterministic random multi-box layout."""
 
-    kwargs = cfg.random_box_kwargs
+    kwargs, layout_index = resolve_random_box_layout(
+        cfg.random_box_kwargs, layout_index
+    )
     horizontal_scale = float(terrain.horizontal_scale)
     vertical_scale = float(terrain.vertical_scale)
     track_length = terrain.width * horizontal_scale
     track_width = terrain.length * horizontal_scale
 
     layout_count = int(kwargs["num_unique_layouts"])
-    if layout_count <= 0:
-        raise ValueError("num_unique_layouts must be positive.")
     layout_index = int(layout_index) % layout_count
     rng = np.random.default_rng(
         np.random.SeedSequence([int(kwargs["seed"]), 104729, layout_index])
@@ -81,8 +122,10 @@ def build_random_box_terrain(terrain, cfg, layout_index):
         kwargs["box_count_range"][1],
     )
     box_count = int(box_counts[layout_index])
-    if int(cfg.num_goals) != int(kwargs["box_count_range"][1]) + 1:
-        raise ValueError("num_goals must contain the maximum box count plus one exit.")
+    if int(cfg.num_goals) < int(kwargs["box_count_range"][1]) + 1:
+        raise ValueError(
+            "num_goals must contain the maximum box count plus one exit."
+        )
 
     spawn_x = float(kwargs["spawn_margin"])
     center_y = track_width / 2.0
@@ -95,19 +138,51 @@ def build_random_box_terrain(terrain, cfg, layout_index):
     )
     for box_index in range(box_count):
         if box_index > 0:
-            gap, gap_class = _sample_gap(
+            sampled_gap, gap_class = _sample_gap(
                 rng, kwargs["gap_distributions"], horizontal_scale
             )
+            gap_override = _get_indexed_override(
+                kwargs.get("gap_overrides"), box_index
+            )
+            gap = (
+                _aligned_fixed(gap_override, horizontal_scale)
+                if gap_override is not None
+                else sampled_gap
+            )
+            if gap_override is not None:
+                gap_class = -2
             cursor_x += gap
         else:
             gap = cursor_x - spawn_x
             gap_class = -1
 
-        length = _aligned_sample(rng, kwargs["length_range"], horizontal_scale)
-        width = _aligned_sample(rng, kwargs["width_range"], horizontal_scale)
-        height = _aligned_sample(rng, kwargs["height_range"], vertical_scale)
-        lateral_offset = _aligned_sample(
+        length = _aligned_sample(
+            rng, kwargs["length_range"], horizontal_scale
+        )
+        width = _aligned_sample(
+            rng, kwargs["width_range"], horizontal_scale
+        )
+        sampled_height = _aligned_sample(
+            rng, kwargs["height_range"], vertical_scale
+        )
+        height_override = _get_indexed_override(
+            kwargs.get("height_overrides"), box_index
+        )
+        height = (
+            _aligned_fixed(height_override, vertical_scale)
+            if height_override is not None
+            else sampled_height
+        )
+        sampled_lateral_offset = _aligned_sample(
             rng, kwargs["lateral_offset_range"], horizontal_scale
+        )
+        lateral_offset_override = _get_indexed_override(
+            kwargs.get("lateral_offset_overrides"), box_index
+        )
+        lateral_offset = (
+            _aligned_fixed(lateral_offset_override, horizontal_scale)
+            if lateral_offset_override is not None
+            else sampled_lateral_offset
         )
 
         front_x = cursor_x

@@ -70,6 +70,7 @@ def play(args):
     is_random_box_task = args.task in {
         "go2_random_box",
         "go2_random_box_clean",
+        "go2_random_box_eval",
     }
     preserve_box_terrain = is_five_box_task or is_random_box_task
     # override some parameters for testing

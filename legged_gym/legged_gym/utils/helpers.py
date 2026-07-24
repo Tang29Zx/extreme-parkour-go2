@@ -233,6 +233,11 @@ def get_args():
         {"name": "--daggerid", "type": str, "help": "name of dagger run"},
         {"name": "--use_camera", "action": "store_true", "default": False, "help": "render camera for distillation"},
         {"name": "--cpu_camera", "action": "store_true", "default": False, "help": "read camera images back through CPU memory; intended for low-environment-count replay"},
+        {"name": "--jit_model_dir", "type": str, "default": None, "help": "directory containing base_jit.pt and vision_weight.pt"},
+        {"name": "--replay_steps", "type": int, "default": None, "help": "number of policy steps to run during replay"},
+        {"name": "--record", "action": "store_true", "default": False, "help": "record the Isaac Gym viewer to MP4"},
+        {"name": "--record_path", "type": str, "default": None, "help": "output MP4 path for viewer recording"},
+        {"name": "--record_fps", "type": int, "default": 50, "help": "frame rate used for viewer recording"},
 
         {"name": "--mask_obs", "action": "store_true", "default": False, "help": "Mask observation when playing"},
         {"name": "--use_jit", "action": "store_true", "default": False, "help": "Load jit script when playing"},

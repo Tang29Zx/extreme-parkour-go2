@@ -42,6 +42,7 @@ from scipy.ndimage import binary_dilation
 from legged_gym.utils.five_box_terrain import build_five_box_terrain
 from legged_gym.utils.random_box_terrain import (
     build_random_box_terrain,
+    resolve_random_box_layout,
     select_roughness_range,
 )
 
@@ -361,11 +362,16 @@ class Terrain:
                 self._random_box_layout_counter + layout_index_offset
             ) % layout_count
             build_random_box_terrain(terrain, self.cfg, layout_index)
+            roughness_kwargs, roughness_layout_index = (
+                resolve_random_box_layout(
+                    self.cfg.random_box_kwargs, layout_index
+                )
+            )
             roughness_range, roughness_class = select_roughness_range(
-                self.cfg.random_box_kwargs["seed"],
-                layout_count,
-                self.cfg.random_box_kwargs["ground_roughness_distributions"],
-                layout_index,
+                roughness_kwargs["seed"],
+                roughness_kwargs["num_unique_layouts"],
+                roughness_kwargs["ground_roughness_distributions"],
+                roughness_layout_index,
             )
             self.add_roughness(terrain, height_range=roughness_range)
             terrain.roughness_class = roughness_class
