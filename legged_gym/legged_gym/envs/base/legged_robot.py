@@ -116,6 +116,13 @@ class LeggedRobot(BaseTask):
 
         self.resize_transform = torchvision.transforms.Resize((self.cfg.depth.resized[1], self.cfg.depth.resized[0]), 
                                                               interpolation=torchvision.transforms.InterpolationMode.BICUBIC)
+        if self.cfg.depth.use_camera:
+            camera_mode = (
+                "GPU tensor camera"
+                if getattr(self.cfg.depth, "use_gpu_tensor", True)
+                else "CPU camera readback"
+            )
+            print(f"Depth camera mode: {camera_mode}")
         
         if not self.headless:
             self.set_camera(self.cfg.viewer.pos, self.cfg.viewer.lookat)
@@ -281,15 +288,33 @@ class LeggedRobot(BaseTask):
             return
         self.gym.step_graphics(self.sim) # required to render in headless mode
         self.gym.render_all_camera_sensors(self.sim)
-        self.gym.start_access_image_tensors(self.sim)
 
+        use_gpu_tensor = getattr(self.cfg.depth, "use_gpu_tensor", True)
         depth_images = []
-        for i in range(self.num_envs):
-            depth_image_ = self.gym.get_camera_image_gpu_tensor(self.sim, 
-                                                                self.envs[i], 
-                                                                self.cam_handles[i],
-                                                                gymapi.IMAGE_DEPTH)
-            depth_images.append(gymtorch.wrap_tensor(depth_image_))
+        if use_gpu_tensor:
+            self.gym.start_access_image_tensors(self.sim)
+            for i in range(self.num_envs):
+                depth_image_ = self.gym.get_camera_image_gpu_tensor(
+                    self.sim,
+                    self.envs[i],
+                    self.cam_handles[i],
+                    gymapi.IMAGE_DEPTH,
+                )
+                depth_images.append(gymtorch.wrap_tensor(depth_image_))
+        else:
+            for i in range(self.num_envs):
+                depth_image_ = self.gym.get_camera_image(
+                    self.sim,
+                    self.envs[i],
+                    self.cam_handles[i],
+                    gymapi.IMAGE_DEPTH,
+                )
+                depth_images.append(
+                    torch.from_numpy(np.asarray(depth_image_).copy()).to(
+                        device=self.device,
+                        dtype=torch.float32,
+                    )
+                )
 
         depth_images = self.process_depth_images(torch.stack(depth_images, dim=0))
         self.depth_buffer = torch.cat(
@@ -301,7 +326,8 @@ class LeggedRobot(BaseTask):
             -1, self.cfg.depth.buffer_len, -1, -1
         )
 
-        self.gym.end_access_image_tensors(self.sim)
+        if use_gpu_tensor:
+            self.gym.end_access_image_tensors(self.sim)
 
     def _update_goals(self):
         next_flag = self.reach_goal_timer > self.cfg.env.reach_goal_delay / self.dt
@@ -1077,7 +1103,9 @@ class LeggedRobot(BaseTask):
             camera_props = gymapi.CameraProperties()
             camera_props.width = self.cfg.depth.original[0]
             camera_props.height = self.cfg.depth.original[1]
-            camera_props.enable_tensors = True
+            camera_props.enable_tensors = getattr(
+                self.cfg.depth, "use_gpu_tensor", True
+            )
 
             if hasattr(config, "near_plane"):
                 camera_props.near_plane = config.near_plane

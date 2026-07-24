@@ -125,6 +125,10 @@ def update_cfg_from_args(env_cfg, cfg_train, args):
     if env_cfg is not None:
         if args.use_camera:
             env_cfg.depth.use_camera = args.use_camera
+        if getattr(args, "cpu_camera", False):
+            if not env_cfg.depth.use_camera:
+                raise ValueError("--cpu_camera requires --use_camera.")
+            env_cfg.depth.use_gpu_tensor = False
         if env_cfg.depth.use_camera and args.headless:  # set camera specific parameters
             env_cfg.env.num_envs = env_cfg.depth.camera_num_envs
             env_cfg.terrain.num_rows = env_cfg.depth.camera_terrain_num_rows
@@ -228,6 +232,7 @@ def get_args():
         {"name": "--resumeid", "type": str, "help": "exptid"},
         {"name": "--daggerid", "type": str, "help": "name of dagger run"},
         {"name": "--use_camera", "action": "store_true", "default": False, "help": "render camera for distillation"},
+        {"name": "--cpu_camera", "action": "store_true", "default": False, "help": "read camera images back through CPU memory; intended for low-environment-count replay"},
 
         {"name": "--mask_obs", "action": "store_true", "default": False, "help": "Mask observation when playing"},
         {"name": "--use_jit", "action": "store_true", "default": False, "help": "Load jit script when playing"},

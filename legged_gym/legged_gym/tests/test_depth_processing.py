@@ -5,6 +5,7 @@ import unittest
 from unittest import mock
 
 import isaacgym
+import numpy as np
 import torch
 import torchvision
 
@@ -137,6 +138,82 @@ class DepthProcessingTest(unittest.TestCase):
             robot.depth_buffer[2],
             torch.stack(
                 [torch.full((2, 3), 6.0), torch.full((2, 3), -3.0)]
+            ),
+        )
+
+    def test_cpu_depth_buffer_uses_numpy_readback_without_gpu_access(self):
+        class FakeGym:
+            def __init__(self):
+                self.start_access_calls = 0
+                self.end_access_calls = 0
+                self.cpu_read_calls = 0
+
+            def step_graphics(self, sim):
+                pass
+
+            def render_all_camera_sensors(self, sim):
+                pass
+
+            def start_access_image_tensors(self, sim):
+                self.start_access_calls += 1
+
+            def end_access_image_tensors(self, sim):
+                self.end_access_calls += 1
+
+            def get_camera_image_gpu_tensor(
+                self, sim, env_handle, camera_handle, image_type
+            ):
+                raise AssertionError("GPU camera tensor path must not be used")
+
+            def get_camera_image(
+                self, sim, env_handle, camera_handle, image_type
+            ):
+                self.cpu_read_calls += 1
+                return np.full((2, 3), -float(env_handle + 1), dtype=np.float32)
+
+        robot = object.__new__(LeggedRobot)
+        robot.cfg = SimpleNamespace(
+            depth=SimpleNamespace(
+                use_camera=True,
+                use_gpu_tensor=False,
+                update_interval=5,
+                buffer_len=2,
+            )
+        )
+        robot.global_counter = 5
+        robot.num_envs = 2
+        robot.device = "cpu"
+        robot.sim = object()
+        robot.gym = FakeGym()
+        robot.envs = [0, 1]
+        robot.cam_handles = [0, 1]
+        robot.episode_length_buf = torch.tensor([0, 2])
+        robot.depth_buffer = torch.zeros(2, 2, 2, 3)
+        batch_calls = []
+
+        def process_depth_images(depth_images):
+            batch_calls.append(depth_images.clone())
+            return depth_images
+
+        robot.process_depth_images = process_depth_images
+
+        LeggedRobot.update_depth_buffer(robot)
+
+        self.assertEqual(robot.gym.cpu_read_calls, 2)
+        self.assertEqual(robot.gym.start_access_calls, 0)
+        self.assertEqual(robot.gym.end_access_calls, 0)
+        self.assertEqual(len(batch_calls), 1)
+        self.assertEqual(batch_calls[0].dtype, torch.float32)
+        self.assertEqual(batch_calls[0].device.type, "cpu")
+        self.assertTrue(torch.isfinite(robot.depth_buffer).all())
+        torch.testing.assert_close(
+            robot.depth_buffer[0],
+            torch.full((2, 2, 3), -1.0),
+        )
+        torch.testing.assert_close(
+            robot.depth_buffer[1],
+            torch.stack(
+                [torch.zeros(2, 3), torch.full((2, 3), -2.0)]
             ),
         )
 

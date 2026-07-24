@@ -12,6 +12,17 @@
 
 ## 已验证踩坑
 
+- 原仓库基线提交内共跟踪149个`.pt`文件，约1.5GB，其中140个是训练
+  checkpoint。主要有两套不同的teacher序列：
+  `logs/extreme_parkour_a1_test/607-00-06`（87个checkpoint）和
+  `logs/parkour_A100/607-02-16`（49个checkpoint）；两处
+  `model_29500.pt`哈希不同，不能混用。多个目录中的`base_jit.pt`和
+  `vision_weight.pt`内容完全相同，只是重复副本。
+- 原仓库自带的`base_jit.pt`与`vision_weight.pt`是Go2视觉推理产物：
+  配置使用Go2 URDF、53维本体观测、12维动作、87×58深度图、10步历史、
+  `action_scale=0.25`和PD参数`Kp=40/Kd=1`。它们只能成对用于推理，
+  不能恢复PPO训练；重复副本旁的相机配置并不完全一致，来源关系不够可靠，
+  因此只能作为仿真基线，不能未经等价性和安全验证直接部署到真机。
 - 仓库根目录现已忽略 Python/测试/IDE/本地编译缓存以及新生成的训练日志；
   `legged_gym` 源码目录中误提交的 `__pycache__/*.pyc` 已解除 Git 跟踪。
   Isaac Gym `_bindings/linux-x86_64/py36` 下随 SDK 分发的 `.pyc` 保持跟踪，
@@ -96,6 +107,11 @@
   `vulkaninfo`确认Vulkan编号，再分别传`--device cuda:N`和
   `--graphics_device_id K`。随机箱相机地形的Delatin误差固定为`0.01 m`，
   防止继承原配置的`max_error_camera=2 m`后改变箱体几何。
+- 多GPU相机训练不能在`CUDA_VISIBLE_DEVICES`只暴露一张卡后继续传物理
+  `graphics_device_id>0`：Isaac Gym相机CUDA互操作会报
+  `invalid device ordinal`。若CUDA与Vulkan编号一致，应暴露完整GPU列表，
+  并让`--device cuda:N`、`--rl_device cuda:N`和
+  `--graphics_device_id N`指向同一物理GPU。
 - 192环境的随机箱视觉蒸馏进程在24GB GPU上实测占用约`16.5 GiB`（包含
   Isaac Gym非PyTorch显存）；如果同卡已有约`6.9 GiB`进程，会在首次深度卷积
   时OOM。该配置需要基本独占一张24GB卡；共享GPU时先确认进程归属，不能停止
@@ -107,6 +123,11 @@
 - 推荐路径是先用最终 teacher policy 蒸馏得到深度相机 student，再导出匹配的
   base JIT 与 vision weights。teacher policy、视觉编码器与导出权重必须来自
   同一训练版本，不能把旧视觉权重和后续修改过的 Actor 混用。
+- 本地单环境视觉回放支持显式传入 `--cpu_camera`：相机仍由NVIDIA/Vulkan
+  渲染，但深度图通过Isaac Gym CPU readback读取，不经过
+  `get_camera_image_gpu_tensor()`，可绕过本地PyTorch不支持RTX 5070 Ti
+  `sm_120`的问题。该路径仅用于少量环境回放；服务器批量蒸馏继续使用默认
+  GPU tensor相机路径。
 - 当前仓库有视觉蒸馏与 JIT 导出代码，但不包含完整、已验证的 Go2 真机低层
   控制程序；真机侧仍需适配 Unitree SDK2、D435i 深度输入、观测顺序、关节
   顺序/符号、动作缩放、默认姿态、PD 参数、控制频率、超时 watchdog 和急停。
