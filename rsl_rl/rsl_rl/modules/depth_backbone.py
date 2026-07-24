@@ -46,6 +46,26 @@ class RecurrentDepthBackbone(nn.Module):
     def detach_hidden_states(self):
         self.hidden_states = self.hidden_states.detach().clone()
 
+    def reset(self, dones=None):
+        """Clear recurrent visual memory for completed environments."""
+        if self.hidden_states is None:
+            return
+        if dones is None:
+            self.hidden_states = None
+            return
+
+        done_mask = dones.to(
+            device=self.hidden_states.device, dtype=torch.bool
+        ).reshape(-1)
+        if done_mask.numel() != self.hidden_states.shape[1]:
+            raise ValueError(
+                "Depth GRU reset mask must match the hidden-state batch size."
+            )
+        if torch.any(done_mask):
+            hidden_states = self.hidden_states.clone()
+            hidden_states[:, done_mask, :] = 0.0
+            self.hidden_states = hidden_states
+
 class StackDepthEncoder(nn.Module):
     def __init__(self, base_backbone, env_cfg) -> None:
         super().__init__()

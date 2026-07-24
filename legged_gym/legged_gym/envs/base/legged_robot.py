@@ -169,7 +169,7 @@ class LeggedRobot(BaseTask):
         self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
         if self.privileged_obs_buf is not None:
             self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
-        self.extras["delta_yaw_ok"] = self.delta_yaw < 0.6
+        self.extras["delta_yaw_ok"] = torch.abs(self.delta_yaw) < 0.6
         if self.cfg.depth.use_camera and self.global_counter % self.cfg.depth.update_interval == 0:
             self.extras["depth"] = self.depth_buffer[:, -2]  # have already selected last one
         else:
@@ -196,6 +196,48 @@ class LeggedRobot(BaseTask):
         )
         if gaussian_noise_std > 0.0:
             depth_images += torch.randn_like(depth_images) * gaussian_noise_std
+
+        far_noise_start = float(
+            getattr(self.cfg.depth, "far_distance_noise_start", 0.0)
+        )
+        far_noise_std = float(
+            getattr(self.cfg.depth, "far_distance_gaussian_std", 0.0)
+        )
+        far_dropout_prob = float(
+            getattr(self.cfg.depth, "far_distance_dropout_prob", 0.0)
+        )
+        far_noise_span = float(self.cfg.depth.far_clip) - far_noise_start
+        if far_noise_span > 0.0 and (
+            far_noise_std > 0.0 or far_dropout_prob > 0.0
+        ):
+            distance = torch.clamp(
+                -depth_images,
+                min=float(self.cfg.depth.near_clip),
+                max=float(self.cfg.depth.far_clip),
+            )
+            far_noise_level = torch.clamp(
+                (distance - far_noise_start) / far_noise_span,
+                min=0.0,
+                max=1.0,
+            )
+            if far_noise_std > 0.0:
+                depth_images += (
+                    torch.randn_like(depth_images)
+                    * far_noise_std
+                    * far_noise_level
+                )
+            if far_dropout_prob > 0.0:
+                far_dropout = (
+                    torch.rand_like(depth_images)
+                    < far_dropout_prob * far_noise_level
+                )
+                depth_images = torch.where(
+                    far_dropout,
+                    torch.full_like(
+                        depth_images, -float(self.cfg.depth.far_clip)
+                    ),
+                    depth_images,
+                )
 
         batch_size, image_height, image_width = depth_images.shape
         if self.cfg.depth.dis_noise > 0.0:

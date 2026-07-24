@@ -225,6 +225,8 @@ def play(args):
 
 
         obs, _, rews, dones, infos = env.step(actions.detach())
+        if env.cfg.depth.use_camera:
+            depth_encoder.reset(dones)
 
         if args.web:
             web_viewer.render(fetch_results=True,

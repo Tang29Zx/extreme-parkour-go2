@@ -142,6 +142,8 @@ def play(args):
         actions = actor(obs_jit.detach())
 
         obs, _, rews, dones, infos = env.step(actions.detach())
+        if env.cfg.depth.use_camera:
+            depth_encoder.reset(dones)
         obs_jit[:, :env.cfg.env.n_proprio] = obs[:, :env.cfg.env.n_proprio]
 
         if args.web:

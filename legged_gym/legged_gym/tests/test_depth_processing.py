@@ -11,6 +11,7 @@ import torchvision
 
 from legged_gym.envs.base import legged_robot
 from legged_gym.envs.base.legged_robot import LeggedRobot
+from rsl_rl.modules.depth_backbone import RecurrentDepthBackbone
 
 
 def make_robot(**depth_overrides):
@@ -22,6 +23,9 @@ def make_robot(**depth_overrides):
         "depth_occlusion_size_range": [0.05, 0.15],
         "near_clip": 0.0,
         "far_clip": 2.0,
+        "far_distance_noise_start": 0.0,
+        "far_distance_gaussian_std": 0.0,
+        "far_distance_dropout_prob": 0.0,
     }
     depth_cfg.update(depth_overrides)
 
@@ -67,6 +71,28 @@ class DepthProcessingTest(unittest.TestCase):
         self.assertEqual(tuple(processed.shape), (192, 58, 87))
         self.assertTrue(torch.isfinite(processed).all())
         torch.testing.assert_close(processed, torch.full_like(processed, 0.5))
+
+    def test_far_distance_dropout_does_not_change_near_pixels(self):
+        robot = make_robot(
+            far_clip=3.0,
+            far_distance_noise_start=2.0,
+            far_distance_dropout_prob=1.0,
+        )
+        depth_images = torch.stack(
+            (
+                -torch.ones(60, 106),
+                -3.0 * torch.ones(60, 106),
+            )
+        )
+
+        processed = robot.process_depth_images(depth_images)
+
+        torch.testing.assert_close(
+            processed[0], torch.full_like(processed[0], -1.0 / 6.0)
+        )
+        torch.testing.assert_close(
+            processed[1], torch.full_like(processed[1], 0.5)
+        )
 
     def test_depth_buffer_calls_batch_processor_once(self):
         class FakeGym:
@@ -215,6 +241,27 @@ class DepthProcessingTest(unittest.TestCase):
             torch.stack(
                 [torch.zeros(2, 3), torch.full((2, 3), -2.0)]
             ),
+        )
+
+
+class DepthRecurrentStateTest(unittest.TestCase):
+    def test_reset_clears_only_completed_environment_state(self):
+        env_cfg = SimpleNamespace(env=SimpleNamespace(n_proprio=53))
+        encoder = RecurrentDepthBackbone(torch.nn.Identity(), env_cfg)
+        encoder(torch.zeros(3, 32), torch.zeros(3, 53))
+        hidden_before_reset = encoder.hidden_states.clone()
+
+        encoder.reset(torch.tensor([False, True, False]))
+
+        torch.testing.assert_close(
+            encoder.hidden_states[:, 0], hidden_before_reset[:, 0]
+        )
+        torch.testing.assert_close(
+            encoder.hidden_states[:, 1],
+            torch.zeros_like(encoder.hidden_states[:, 1]),
+        )
+        torch.testing.assert_close(
+            encoder.hidden_states[:, 2], hidden_before_reset[:, 2]
         )
 
 

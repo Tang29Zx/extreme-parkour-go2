@@ -107,6 +107,9 @@ class LeggedRobotCfg(BaseConfig):
         near_clip = 0
         far_clip = 2
         dis_noise = 0.0
+        far_distance_noise_start = 0.0
+        far_distance_gaussian_std = 0.0
+        far_distance_dropout_prob = 0.0
         
         scale = 1
         invert = True
