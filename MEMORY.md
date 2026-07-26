@@ -51,6 +51,8 @@
   长表 `metrics.csv`、纯文本 `train.log`、`checkpoints.csv` 和追加式
   `run_manifest.jsonl`；`--no_wandb` 不影响这些本地资产。默认每 200 iteration
   保存一次 checkpoint，并同步写入 `checkpoints.csv`。
+- Go2 训练的 PhysX `max_gpu_contact_pairs` 已提升到 `2**24`，为 3090 上测试
+  8192～12288 个并行环境提供接触缓冲容量；该设置会增加 GPU 显存预留。
 - 通用 waypoint episode 指标包含路线成功、摔倒、自然超时、goal 进度、
   episode 时长、水平位移和按 terrain class 的成功率；手动 Viewer reset
   不进入统计。PPO/视觉 loss、奖励分量、学习率、噪声和性能指标共用同一
