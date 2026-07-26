@@ -133,6 +133,9 @@ class Terrain:
             self.add_terrain_to_map(terrain, i, j)
         
     def curiculum(self, random=False, max_difficulty=False):
+        fixed_difficulty = getattr(self.cfg, "fixed_terrain_difficulty", None)
+        if fixed_difficulty is not None and not 0.0 <= fixed_difficulty <= 1.0:
+            raise ValueError("fixed_terrain_difficulty must be between 0.0 and 1.0")
         for j in range(self.cfg.num_cols):
             for i in range(self.cfg.num_rows):
                 difficulty = (
@@ -141,7 +144,9 @@ class Terrain:
                     else 0.0
                 )
                 choice = j / self.cfg.num_cols + 0.001
-                if random:
+                if fixed_difficulty is not None:
+                    terrain = self.make_terrain(choice, fixed_difficulty)
+                elif random:
                     if max_difficulty:
                         terrain = self.make_terrain(choice, np.random.uniform(0.7, 1))
                     else:

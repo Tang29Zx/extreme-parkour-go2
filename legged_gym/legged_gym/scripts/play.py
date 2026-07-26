@@ -72,15 +72,18 @@ def play(args):
         "go2_random_box_clean",
         "go2_random_box_eval",
     }
-    preserve_box_terrain = is_five_box_task or is_random_box_task
+    is_mixed_task = args.task == "go2_mixed"
+    preserve_task_terrain = (
+        is_five_box_task or is_random_box_task or is_mixed_task
+    )
     # override some parameters for testing
     if args.nodelay:
         env_cfg.domain_rand.action_delay_view = 0
         env_cfg.domain_rand.action_delay_range = [0, 0]
-    env_cfg.env.num_envs = 10
+    env_cfg.env.num_envs = 15 if is_mixed_task else 10
     env_cfg.env.episode_length_s = 60
     env_cfg.commands.resampling_time = 60
-    if not preserve_box_terrain:
+    if not preserve_task_terrain:
         env_cfg.terrain.num_rows = 5
         env_cfg.terrain.num_cols = 5
         env_cfg.terrain.height = [0.02, 0.02]
@@ -120,7 +123,11 @@ def play(args):
     
     env_cfg_dict = class_to_dict(env_cfg)
     config_path = os.path.join(log_pth, "traced")
-    config_name = f"config_{args.task}.json" if is_random_box_task else "config.json"
+    config_name = (
+        f"config_{args.task}.json"
+        if is_random_box_task or is_mixed_task
+        else "config.json"
+    )
     with open(os.path.join(config_path, config_name), "w") as f:
         json.dump(env_cfg_dict, f, indent=4)
     print('env config has been saved.')

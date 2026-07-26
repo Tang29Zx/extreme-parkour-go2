@@ -85,6 +85,12 @@ class BaseTask():
         self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         self.time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        self.goal_success_buf = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.bool
+        )
+        self.goal_evaluation_episode_buf = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.bool
+        )
         self.manual_reset_buf = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.bool
         )

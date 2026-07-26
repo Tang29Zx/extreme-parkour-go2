@@ -26,6 +26,10 @@ class ManualViewerResetTest(unittest.TestCase):
         robot.reset_buf = torch.zeros(3, dtype=torch.bool)
         robot.time_out_buf = torch.zeros(3, dtype=torch.bool)
         robot.manual_reset_buf = torch.tensor([False, True, False])
+        robot.goal_success_buf = torch.zeros(3, dtype=torch.bool)
+        robot.goal_evaluation_episode_buf = torch.zeros(
+            3, dtype=torch.bool
+        )
         robot.roll = torch.zeros(3)
         robot.pitch = torch.zeros(3)
         robot.cur_goal_idx = torch.zeros(3, dtype=torch.long)

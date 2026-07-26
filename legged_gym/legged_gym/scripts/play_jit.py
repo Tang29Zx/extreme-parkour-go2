@@ -20,6 +20,10 @@ RANDOM_BOX_TASKS = {
     "go2_random_box_clean",
     "go2_random_box_eval",
 }
+PRESERVED_TERRAIN_TASKS = RANDOM_BOX_TASKS | {
+    "go2_five_box",
+    "go2_mixed",
+}
 
 
 def resolve_model_paths(model_dir):
@@ -66,18 +70,28 @@ def load_models(model_dir, device):
 
 
 def configure_replay_env(env_cfg, args):
-    preserve_box_terrain = args.task in RANDOM_BOX_TASKS or args.task == "go2_five_box"
-    env_cfg.env.num_envs = args.num_envs if args.num_envs is not None else 1
+    preserve_task_terrain = args.task in PRESERVED_TERRAIN_TASKS
+    mixed_defaults = args.task == "go2_mixed"
+    default_num_envs = 15 if mixed_defaults else 1
+    default_rows = 1
+    default_cols = 15 if mixed_defaults else 1
+    env_cfg.env.num_envs = (
+        args.num_envs if args.num_envs is not None else default_num_envs
+    )
     env_cfg.env.episode_length_s = 60
     env_cfg.commands.resampling_time = 60
-    env_cfg.terrain.num_rows = args.rows if args.rows is not None else 1
-    env_cfg.terrain.num_cols = args.cols if args.cols is not None else 1
+    env_cfg.terrain.num_rows = (
+        args.rows if args.rows is not None else default_rows
+    )
+    env_cfg.terrain.num_cols = (
+        args.cols if args.cols is not None else default_cols
+    )
 
     if args.nodelay:
         env_cfg.domain_rand.action_delay_view = 0
         env_cfg.domain_rand.action_delay_range = [0, 0]
 
-    if not preserve_box_terrain:
+    if not preserve_task_terrain:
         env_cfg.terrain.height = [0.02, 0.02]
         env_cfg.terrain.terrain_dict = {
             "smooth slope": 0.0,

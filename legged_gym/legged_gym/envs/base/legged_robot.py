@@ -55,6 +55,32 @@ import matplotlib.pyplot as plt
 
 np.set_printoptions(threshold=np.inf)
 
+TERRAIN_CLASS_NAMES = {
+    0: "smooth_slope_up",
+    1: "smooth_slope_down",
+    2: "rough_slope_up",
+    3: "rough_slope_down",
+    4: "rough_stairs_up",
+    5: "rough_stairs_down",
+    6: "discrete",
+    7: "stepping_stones",
+    8: "gaps",
+    9: "smooth_flat",
+    10: "pit",
+    11: "wall",
+    12: "platform",
+    13: "large_stairs_up",
+    14: "large_stairs_down",
+    15: "parkour",
+    16: "parkour_hurdle",
+    17: "parkour_flat",
+    18: "parkour_step",
+    19: "parkour_gap",
+    20: "demo",
+    21: "five_box",
+    22: "random_box",
+}
+
 def euler_from_quaternion(quat_angle):
         """
         Convert a quaternion into euler angles (roll, pitch, yaw)
@@ -478,14 +504,88 @@ class LeggedRobot(BaseTask):
         reach_goal_cutoff = self.cur_goal_idx >= self.cfg.terrain.num_goals
         height_cutoff = self.root_states[:, 2] < -0.25
 
-        self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
-        self.time_out_buf |= reach_goal_cutoff
+        natural_timeout_cutoff = (
+            self.episode_length_buf > self.max_episode_length
+        )
+        fall_cutoff = roll_cutoff | pitch_cutoff | height_cutoff
+        self.episode_timeout_buf = natural_timeout_cutoff
+        self.fall_buf = fall_cutoff
+
+        # Goal completion keeps the original timeout semantics so PPO does not
+        # add a terminal reward when a route is completed.
+        self.time_out_buf = natural_timeout_cutoff | reach_goal_cutoff
 
         self.reset_buf |= self.time_out_buf
         self.reset_buf |= roll_cutoff
         self.reset_buf |= pitch_cutoff
         self.reset_buf |= height_cutoff
         self.reset_buf |= self.manual_reset_buf
+        self.goal_success_buf[:] = reach_goal_cutoff
+        self.goal_evaluation_episode_buf[:] = self.reset_buf & (
+            ~self.manual_reset_buf | self.goal_success_buf
+        )
+
+    def _collect_episode_outcomes(self, env_ids):
+        """Collect completed episode outcomes before reset mutates state."""
+        valid_env_ids = env_ids[
+            self.goal_evaluation_episode_buf[env_ids]
+        ]
+        if valid_env_ids.numel() == 0:
+            return {}
+
+        num_goals = int(self.cfg.terrain.num_goals)
+        goals_reached = torch.clamp(
+            self.cur_goal_idx[valid_env_ids],
+            min=0,
+            max=num_goals,
+        ).float()
+        distance_traveled = torch.norm(
+            self.root_states[valid_env_ids, :2]
+            - self.env_origins[valid_env_ids, :2],
+            dim=1,
+        )
+        metrics = {
+            "success_rate": self.goal_success_buf[valid_env_ids].float(),
+            "fall_rate": self.fall_buf[valid_env_ids].float(),
+            "timeout_rate": self.episode_timeout_buf[
+                valid_env_ids
+            ].float(),
+            "goals_reached": goals_reached,
+            "goal_progress": goals_reached / max(num_goals, 1),
+            "episode_duration_s": (
+                self.episode_length_buf[valid_env_ids].float() * self.dt
+            ),
+            "distance_traveled_m": distance_traveled,
+        }
+
+        terrain_classes = self.env_class[valid_env_ids].long()
+        successes = self.goal_success_buf[valid_env_ids].float()
+        for terrain_class in torch.unique(terrain_classes).tolist():
+            class_mask = terrain_classes == terrain_class
+            class_name = TERRAIN_CLASS_NAMES.get(
+                terrain_class,
+                "class_{}".format(terrain_class),
+            )
+            metrics[
+                "terrain_{}_success_rate".format(class_name)
+            ] = successes[class_mask]
+        return metrics
+
+    def _log_goal_success_rates(self, env_ids):
+        groups = getattr(self.cfg.env, "goal_success_rate_groups", None)
+        if not groups:
+            return
+
+        valid_env_ids = env_ids[
+            self.goal_evaluation_episode_buf[env_ids]
+        ]
+        terrain_types = self.terrain_types[valid_env_ids]
+        successes = self.goal_success_buf[valid_env_ids].float()
+        for name, (start_col, end_col) in groups.items():
+            group_mask = (terrain_types >= start_col) & (
+                terrain_types < end_col
+            )
+            self.extras["episode"][name] = successes[group_mask]
 
     def reset_idx(self, env_ids):
         """ Reset some environments.
@@ -499,6 +599,7 @@ class LeggedRobot(BaseTask):
         """
         if len(env_ids) == 0:
             return
+        episode_outcomes = self._collect_episode_outcomes(env_ids)
         # update curriculum
         if self.cfg.terrain.curriculum:
             self._update_terrain_curriculum(env_ids)
@@ -541,6 +642,8 @@ class LeggedRobot(BaseTask):
         for key in self.episode_sums.keys():
             self.extras["episode"]['rew_' + key] = torch.mean(self.episode_sums[key][env_ids]) / self.max_episode_length_s
             self.episode_sums[key][env_ids] = 0.
+        self.extras["episode"].update(episode_outcomes)
+        self._log_goal_success_rates(env_ids)
         self.episode_length_buf[env_ids] = 0
 
         # log additional curriculum info
@@ -1411,18 +1514,24 @@ class LeggedRobot(BaseTask):
         sphere_geom = gymutil.WireframeSphereGeometry(0.1, 32, 32, None, color=(1, 0, 0))
         sphere_geom_cur = gymutil.WireframeSphereGeometry(0.1, 32, 32, None, color=(0, 0, 1))
         sphere_geom_reached = gymutil.WireframeSphereGeometry(self.cfg.env.next_goal_threshold, 32, 32, None, color=(0, 1, 0))
-        goals = self.terrain_goals[self.terrain_levels[self.lookat_id], self.terrain_types[self.lookat_id]].cpu().numpy()
-        for i, goal in enumerate(goals):
-            goal_xy = goal[:2] + self.terrain.cfg.border_size
-            pts = (goal_xy/self.terrain.cfg.horizontal_scale).astype(int)
-            goal_z = self.height_samples[pts[0], pts[1]].cpu().item() * self.terrain.cfg.vertical_scale
-            pose = gymapi.Transform(gymapi.Vec3(goal[0], goal[1], goal_z), r=None)
-            if i == self.cur_goal_idx[self.lookat_id].cpu().item():
-                gymutil.draw_lines(sphere_geom_cur, self.gym, self.viewer, self.envs[self.lookat_id], pose)
-                if self.reached_goal_ids[self.lookat_id]:
-                    gymutil.draw_lines(sphere_geom_reached, self.gym, self.viewer, self.envs[self.lookat_id], pose)
-            else:
-                gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[self.lookat_id], pose)
+        draw_all_goals = getattr(self.cfg.env, "draw_all_goals", False)
+        env_ids = range(self.num_envs) if draw_all_goals else (self.lookat_id,)
+        for env_id in env_ids:
+            goals = self.terrain_goals[
+                self.terrain_levels[env_id], self.terrain_types[env_id]
+            ].cpu().numpy()
+            current_goal_idx = self.cur_goal_idx[env_id].cpu().item()
+            for goal_idx, goal in enumerate(goals):
+                goal_xy = goal[:2] + self.terrain.cfg.border_size
+                pts = (goal_xy/self.terrain.cfg.horizontal_scale).astype(int)
+                goal_z = self.height_samples[pts[0], pts[1]].cpu().item() * self.terrain.cfg.vertical_scale
+                pose = gymapi.Transform(gymapi.Vec3(goal[0], goal[1], goal_z), r=None)
+                if goal_idx == current_goal_idx:
+                    gymutil.draw_lines(sphere_geom_cur, self.gym, self.viewer, self.envs[env_id], pose)
+                    if self.reached_goal_ids[env_id]:
+                        gymutil.draw_lines(sphere_geom_reached, self.gym, self.viewer, self.envs[env_id], pose)
+                else:
+                    gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[env_id], pose)
         
         if not self.cfg.depth.use_camera:
             sphere_geom_arrow = gymutil.WireframeSphereGeometry(0.02, 16, 16, None, color=(1, 0.35, 0.25))

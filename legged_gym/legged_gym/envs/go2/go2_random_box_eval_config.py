@@ -12,6 +12,9 @@ class Go2RandomBoxEvalCfg(Go2RandomBoxCfg):
     class env(Go2RandomBoxCfg.env):
         num_envs = 1
 
+    class domain_rand(Go2RandomBoxCfg.domain_rand):
+        push_robots = False
+
     class terrain(Go2RandomBoxCfg.terrain):
         terrain_length = 30.0
         terrain_width = 4.0
@@ -26,7 +29,7 @@ class Go2RandomBoxEvalCfg(Go2RandomBoxCfg):
         random_box_kwargs.update(
             {
                 "seed": 20260724,
-                "num_unique_layouts": 3,
+                "num_unique_layouts": 4,
                 "box_count_range": (10, 10),
                 "lateral_offset_range": (-0.5, 0.5),
                 "gap_distributions": (
@@ -60,18 +63,18 @@ class Go2RandomBoxEvalCfg(Go2RandomBoxCfg):
                             {"range": (0.20, 0.70), "weight": 1.0},
                         ),
                         "gap_overrides": {
-                            1: 0.70,
+                            1: 0.40,
                             2: 0.35,
                             3: 0.25,
-                            4: 0.70,
+                            4: 0.90,
                             5: 0.35,
-                            6: 0.70,
+                            6: 0.90,
                             7: 0.25,
-                            8: 0.70,
-                            9: 0.35,
+                            8: 0.40,
+                            9: 0.25,
                         },
                         # Alternate low-to-high challenges while giving every
-                        # high-to-low transition the full 0.70 m approach gap.
+                        # high-to-low transition an explicit approach gap.
                         "height_overrides": {
                             2: 0.45,
                             3: 0.40,
@@ -85,6 +88,55 @@ class Go2RandomBoxEvalCfg(Go2RandomBoxCfg):
                             2: -0.25,
                             4: 0.25,
                         },
+                    },
+                    3: {
+                        "source_layout_index": 0,
+                        "length_range": (0.50, 0.95),
+                        "width_range": (0.80, 1.10),
+                        "height_range": (0.15, 0.50),
+                        "lateral_offset_range": (-0.65, 0.65),
+                        "gap_distributions": (
+                            {"range": (0.20, 0.95), "weight": 1.0},
+                        ),
+                        "gap_overrides": {
+                            1: 0.20,
+                            2: 0.85,
+                            3: 0.20,
+                            4: 0.90,
+                            5: 0.25,
+                            6: 0.95,
+                            7: 0.20,
+                            8: 0.85,
+                            9: 0.20,
+                        },
+                        "height_overrides": {
+                            0: 0.20,
+                            1: 0.50,
+                            2: 0.15,
+                            3: 0.48,
+                            4: 0.20,
+                            5: 0.50,
+                            6: 0.15,
+                            7: 0.45,
+                            8: 0.15,
+                            9: 0.50,
+                        },
+                        # Positive y is left while facing world +x.
+                        "lateral_offset_overrides": {
+                            0: 0.00,
+                            1: 0.55,
+                            2: -0.55,
+                            3: 0.65,
+                            4: -0.60,
+                            5: 0.60,
+                            6: -0.65,
+                            7: 0.55,
+                            8: -0.55,
+                            9: 0.60,
+                        },
+                        "ground_roughness_distributions": (
+                            {"range": (0.06, 0.06), "weight": 1.0},
+                        ),
                     },
                 },
                 "ground_roughness_distributions": (

@@ -128,7 +128,7 @@ class RandomBoxEvalConfigTest(unittest.TestCase):
         self.assertEqual(resolved_kwargs["num_unique_layouts"], 400)
         self.assertEqual(resolved_index, 130)
 
-    def test_layout_two_uses_normalized_box_and_gap_ranges(self):
+    def test_layout_two_uses_normalized_boxes_and_configured_gaps(self):
         cfg = Go2RandomBoxEvalCfg.terrain
         base_specs = build_random_box_terrain(make_terrain(cfg), cfg, 0)
         compact_specs = build_random_box_terrain(
@@ -148,10 +148,9 @@ class RandomBoxEvalConfigTest(unittest.TestCase):
                 )
             if compact["index"] > 0:
                 self.assertGreaterEqual(compact["gap"], 0.20 - 1e-8)
-                if compact["index"] != 1:
-                    self.assertLessEqual(compact["gap"], 0.70 + 1e-8)
+                self.assertLessEqual(compact["gap"], 0.90 + 1e-8)
 
-        self.assertAlmostEqual(compact_specs[1]["gap"], 0.70)
+        self.assertAlmostEqual(compact_specs[1]["gap"], 0.40)
         self.assertAlmostEqual(compact_specs[2]["gap"], 0.35)
         self.assertAlmostEqual(compact_specs[2]["height"], 0.45)
         self.assertAlmostEqual(compact_specs[2]["lateral_offset"], -0.25)
@@ -161,7 +160,7 @@ class RandomBoxEvalConfigTest(unittest.TestCase):
         )
         self.assertAlmostEqual(compact_specs[3]["gap"], 0.25)
         self.assertAlmostEqual(compact_specs[3]["height"], 0.40)
-        self.assertAlmostEqual(compact_specs[4]["gap"], 0.70)
+        self.assertAlmostEqual(compact_specs[4]["gap"], 0.90)
         self.assertAlmostEqual(compact_specs[4]["height"], 0.20)
         self.assertAlmostEqual(compact_specs[4]["lateral_offset"], 0.25)
         self.assertAlmostEqual(
@@ -170,12 +169,61 @@ class RandomBoxEvalConfigTest(unittest.TestCase):
         )
         self.assertAlmostEqual(compact_specs[5]["gap"], 0.35)
         self.assertAlmostEqual(compact_specs[5]["height"], 0.45)
-        self.assertAlmostEqual(compact_specs[6]["gap"], 0.70)
+        self.assertAlmostEqual(compact_specs[6]["gap"], 0.90)
         self.assertAlmostEqual(compact_specs[7]["gap"], 0.25)
-        self.assertAlmostEqual(compact_specs[8]["gap"], 0.70)
+        self.assertAlmostEqual(compact_specs[8]["gap"], 0.40)
         self.assertAlmostEqual(compact_specs[8]["height"], 0.20)
-        self.assertAlmostEqual(compact_specs[9]["gap"], 0.35)
+        self.assertAlmostEqual(compact_specs[9]["gap"], 0.25)
         self.assertAlmostEqual(compact_specs[9]["height"], 0.45)
+
+    def test_layout_three_combines_all_hard_geometry_features(self):
+        cfg = Go2RandomBoxEvalCfg.terrain
+        self.assertEqual(cfg.random_box_kwargs["num_unique_layouts"], 4)
+        first_terrain = make_terrain(cfg)
+        second_terrain = make_terrain(cfg)
+        first_specs = build_random_box_terrain(first_terrain, cfg, 3)
+        second_specs = build_random_box_terrain(second_terrain, cfg, 3)
+
+        self.assertEqual(first_specs, second_specs)
+        np.testing.assert_array_equal(
+            first_terrain.height_field_raw,
+            second_terrain.height_field_raw,
+        )
+        self.assertEqual(len(first_specs), 10)
+        for spec in first_specs:
+            self.assertGreaterEqual(spec["length"], 0.50 - 1e-8)
+            self.assertLessEqual(spec["length"], 0.95 + 1e-8)
+            self.assertGreaterEqual(spec["width"], 0.80 - 1e-8)
+            self.assertLessEqual(spec["width"], 1.10 + 1e-8)
+
+        np.testing.assert_allclose(
+            [spec["height"] for spec in first_specs],
+            [0.20, 0.50, 0.15, 0.48, 0.20, 0.50, 0.15, 0.45, 0.15, 0.50],
+        )
+        np.testing.assert_allclose(
+            [spec["gap"] for spec in first_specs[1:]],
+            [0.20, 0.85, 0.20, 0.90, 0.25, 0.95, 0.20, 0.85, 0.20],
+        )
+        np.testing.assert_allclose(
+            [spec["lateral_offset"] for spec in first_specs],
+            [0.00, 0.55, -0.55, 0.65, -0.60, 0.60, -0.65, 0.55, -0.55, 0.60],
+        )
+        resolved_kwargs, resolved_index = resolve_random_box_layout(
+            cfg.random_box_kwargs, 3
+        )
+        self.assertEqual(
+            select_roughness_range(
+                resolved_kwargs["seed"],
+                resolved_kwargs["num_unique_layouts"],
+                resolved_kwargs["ground_roughness_distributions"],
+                resolved_index,
+            )[0],
+            (0.06, 0.06),
+        )
+        self.assertLessEqual(
+            first_terrain.goals[-1, 0],
+            cfg.terrain_length - cfg.random_box_kwargs["end_margin"],
+        )
 
 if __name__ == "__main__":
     unittest.main()
