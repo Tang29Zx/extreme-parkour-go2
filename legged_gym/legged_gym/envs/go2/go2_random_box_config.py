@@ -113,7 +113,7 @@ class Go2RandomBoxCfg(Go2ParkourCfg):
         camera_terrain_num_rows = 10
         camera_terrain_num_cols = 40
         position = {
-            "mean": [0.355, 0.0, 0.065],
+            "mean": [0.355, 0.0, 0.115],
             "std": [0.015, 0.01, 0.015],
         }
         rotation = {

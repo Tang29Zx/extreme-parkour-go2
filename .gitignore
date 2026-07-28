@@ -50,3 +50,5 @@ exports/
 # Local native-extension and tool caches
 .cache/
 torch_extensions/
+
+artifacts/

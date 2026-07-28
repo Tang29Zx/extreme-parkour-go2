@@ -1,5 +1,7 @@
 
 import faulthandler
+from copy import deepcopy
+import math
 from pathlib import Path
 import subprocess
 import tempfile
@@ -24,6 +26,70 @@ PRESERVED_TERRAIN_TASKS = RANDOM_BOX_TASKS | {
     "go2_five_box",
     "go2_mixed",
 }
+
+
+def configure_fixed_single_box(env_cfg, height, friction):
+    """Build a deterministic single-box scene while preserving start jitter."""
+
+    env_cfg.env.episode_length_s = 15
+    env_cfg.terrain.num_rows = 1
+    env_cfg.terrain.num_cols = 1
+    env_cfg.terrain.max_init_terrain_level = 0
+    env_cfg.terrain.num_goals = 2
+    env_cfg.terrain.curriculum = False
+    env_cfg.terrain.max_difficulty = False
+
+    fixed_box_kwargs = deepcopy(env_cfg.terrain.random_box_kwargs)
+    fixed_box_kwargs.pop("layout_presets", None)
+    fixed_box_kwargs.update(
+        {
+            "seed": 17,
+            "num_unique_layouts": 1,
+            "box_count_range": (1, 1),
+            "first_runup_range": (1.2, 1.2),
+            "height_range": (height, height),
+            "length_range": (1.2, 1.2),
+            "width_range": (1.2, 1.2),
+            "lateral_offset_range": (0.0, 0.0),
+            "gap_distributions": (
+                {"range": (0.1, 0.1), "weight": 1.0},
+            ),
+            "ground_roughness_distributions": (
+                {"range": (0.005, 0.005), "weight": 1.0},
+            ),
+            "exit_goal_distance": 1.0,
+            "end_margin": 0.5,
+        }
+    )
+    env_cfg.terrain.random_box_kwargs = fixed_box_kwargs
+
+    env_cfg.domain_rand.randomize_friction = friction is not None
+    if friction is not None:
+        env_cfg.domain_rand.friction_range = [friction, friction]
+    env_cfg.domain_rand.randomize_base_mass = False
+    env_cfg.domain_rand.randomize_base_com = False
+    env_cfg.domain_rand.randomize_motor = False
+    env_cfg.domain_rand.push_robots = False
+    env_cfg.domain_rand.action_delay = False
+
+    env_cfg.noise.add_noise = False
+    env_cfg.noise.apply_observation_noise = False
+    env_cfg.noise.contact_dropout_prob = 0.0
+
+
+def offset_camera_z(env_cfg, offset):
+    """Move the camera distribution mean along base-frame Z."""
+
+    if isinstance(env_cfg.depth.position, dict):
+        position = deepcopy(env_cfg.depth.position)
+        position["mean"][2] += offset
+        env_cfg.depth.position = position
+        return position["mean"], position.get("std")
+
+    position = list(env_cfg.depth.position)
+    position[2] += offset
+    env_cfg.depth.position = position
+    return position, None
 
 
 def resolve_model_paths(model_dir):
@@ -87,6 +153,22 @@ def configure_replay_env(env_cfg, args):
         args.cols if args.cols is not None else default_cols
     )
 
+    if args.fixed_box_height is not None:
+        configure_fixed_single_box(
+            env_cfg,
+            args.fixed_box_height,
+            args.fixed_friction,
+        )
+
+    camera_mean, camera_std = offset_camera_z(
+        env_cfg, args.camera_z_offset
+    )
+    print(
+        "Replay camera position: "
+        f"mean={camera_mean}, std={camera_std}, "
+        f"z_offset={args.camera_z_offset:.3f} m"
+    )
+
     if args.nodelay:
         env_cfg.domain_rand.action_delay_view = 0
         env_cfg.domain_rand.action_delay_range = [0, 0]
@@ -140,6 +222,17 @@ def validate_replay_args(args):
         raise ValueError("--record_fps must be greater than zero.")
     if args.record and args.headless:
         raise ValueError("--record requires the Isaac Gym viewer; omit --headless.")
+    if not math.isfinite(args.camera_z_offset):
+        raise ValueError("--camera_z_offset must be finite.")
+    if args.fixed_box_height is not None:
+        if args.task not in RANDOM_BOX_TASKS:
+            raise ValueError(
+                "--fixed_box_height is only valid for random-box tasks."
+            )
+        if args.fixed_box_height <= 0:
+            raise ValueError("--fixed_box_height must be greater than zero.")
+    if args.fixed_friction is not None and args.fixed_friction < 0:
+        raise ValueError("--fixed_friction must be non-negative.")
 
 
 def create_recorder(args, env):
@@ -293,6 +386,24 @@ def play(args):
                     render_all_camera_sensors=True,
                     wait_for_page_load=True,
                 )
+
+            if args.stop_on_done and torch.any(dones):
+                episode = infos.get("episode", {})
+                outcome_keys = (
+                    "success_rate",
+                    "fall_rate",
+                    "timeout_rate",
+                    "goals_reached",
+                    "episode_duration_s",
+                    "distance_traveled_m",
+                )
+                outcome = {
+                    key: float(episode[key].detach().cpu().mean())
+                    for key in outcome_keys
+                    if key in episode
+                }
+                print(f"Replay episode outcome: {outcome}")
+                break
     finally:
         finalize_recording(recorder)
 

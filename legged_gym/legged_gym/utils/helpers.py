@@ -238,6 +238,10 @@ def get_args():
         {"name": "--record", "action": "store_true", "default": False, "help": "record the Isaac Gym viewer to MP4"},
         {"name": "--record_path", "type": str, "default": None, "help": "output MP4 path for viewer recording"},
         {"name": "--record_fps", "type": int, "default": 50, "help": "frame rate used for viewer recording"},
+        {"name": "--fixed_box_height", "type": float, "default": None, "help": "replace a random-box replay terrain with one centered fixed-height box"},
+        {"name": "--fixed_friction", "type": float, "default": None, "help": "use one rigid-shape friction coefficient during replay"},
+        {"name": "--camera_z_offset", "type": float, "default": 0.0, "help": "offset the configured camera position mean along base-frame Z in meters"},
+        {"name": "--stop_on_done", "action": "store_true", "default": False, "help": "stop replay recording when the first environment finishes"},
 
         {"name": "--mask_obs", "action": "store_true", "default": False, "help": "Mask observation when playing"},
         {"name": "--use_jit", "action": "store_true", "default": False, "help": "Load jit script when playing"},
