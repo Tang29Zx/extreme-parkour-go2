@@ -28,7 +28,13 @@ PRESERVED_TERRAIN_TASKS = RANDOM_BOX_TASKS | {
 }
 
 
-def configure_fixed_single_box(env_cfg, height, friction):
+def configure_fixed_single_box(
+    env_cfg,
+    height,
+    friction,
+    ground_roughness=0.005,
+    preserve_randomization=False,
+):
     """Build a deterministic single-box scene while preserving start jitter."""
 
     env_cfg.env.episode_length_s = 15
@@ -55,13 +61,22 @@ def configure_fixed_single_box(env_cfg, height, friction):
                 {"range": (0.1, 0.1), "weight": 1.0},
             ),
             "ground_roughness_distributions": (
-                {"range": (0.005, 0.005), "weight": 1.0},
+                {
+                    "range": (ground_roughness, ground_roughness),
+                    "weight": 1.0,
+                },
             ),
             "exit_goal_distance": 1.0,
             "end_margin": 0.5,
         }
     )
     env_cfg.terrain.random_box_kwargs = fixed_box_kwargs
+
+    if preserve_randomization:
+        if friction is not None:
+            env_cfg.domain_rand.randomize_friction = True
+            env_cfg.domain_rand.friction_range = [friction, friction]
+        return
 
     env_cfg.domain_rand.randomize_friction = friction is not None
     if friction is not None:
@@ -75,6 +90,50 @@ def configure_fixed_single_box(env_cfg, height, friction):
     env_cfg.noise.add_noise = False
     env_cfg.noise.apply_observation_noise = False
     env_cfg.noise.contact_dropout_prob = 0.0
+
+
+def configure_camera_position_stress_noise(env_cfg):
+    """Apply one conservative, reproducible sensor-noise stress profile."""
+
+    env_cfg.noise.add_noise = True
+    env_cfg.noise.apply_observation_noise = True
+    env_cfg.noise.noise_level = 1.0
+    env_cfg.noise.contact_dropout_prob = 0.01
+
+    env_cfg.domain_rand.action_delay = True
+    env_cfg.domain_rand.action_delay_range = [2, 2]
+
+    stress_rotation = [0.0, math.radians(22.5), 0.0]
+    env_cfg.depth.rotation = {
+        "lower": stress_rotation.copy(),
+        "upper": stress_rotation.copy(),
+    }
+    env_cfg.depth.horizontal_fov = 86
+    env_cfg.depth.gaussian_noise_std = 0.01
+    env_cfg.depth.dis_noise = 0.02
+    env_cfg.depth.depth_dropout_prob = 0.01
+    env_cfg.depth.depth_occlusion_prob = 0.30
+    env_cfg.depth.depth_occlusion_size_range = [0.15, 0.15]
+
+
+def set_per_env_camera_positions(env_cfg, positions):
+    """Assign one exact base-frame optical center to every environment."""
+
+    resolved = []
+    for position in positions:
+        values = [float(value) for value in position]
+        if len(values) != 3 or not all(math.isfinite(value) for value in values):
+            raise ValueError("Every camera position must contain three finite values.")
+        resolved.append(values)
+    if not resolved:
+        raise ValueError("At least one camera position is required.")
+
+    env_cfg.depth.position = {
+        "mean": resolved[0].copy(),
+        "std": [0.0, 0.0, 0.0],
+        "per_env": resolved,
+    }
+    return resolved
 
 
 def offset_camera_z(env_cfg, offset):
@@ -158,6 +217,7 @@ def configure_replay_env(env_cfg, args):
             env_cfg,
             args.fixed_box_height,
             args.fixed_friction,
+            args.fixed_ground_roughness,
         )
 
     camera_mean, camera_std = offset_camera_z(
@@ -233,6 +293,8 @@ def validate_replay_args(args):
             raise ValueError("--fixed_box_height must be greater than zero.")
     if args.fixed_friction is not None and args.fixed_friction < 0:
         raise ValueError("--fixed_friction must be non-negative.")
+    if args.fixed_ground_roughness < 0:
+        raise ValueError("--fixed_ground_roughness must be non-negative.")
 
 
 def create_recorder(args, env):

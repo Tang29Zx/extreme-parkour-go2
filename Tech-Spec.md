@@ -194,3 +194,32 @@
   `iteration × num_steps_per_env × num_envs`，累计时间回退为0。
 - 验证包括本地写入器单元测试、episode 结果聚合测试、checkpoint 元数据测试、
   Python 语法检查和相关既有测试；不启动大规模仿真训练。
+
+## Onboard 完整边界单箱评测
+
+- 新增独立入口`legged_gym/scripts/evaluate_onboard_single_box.py`。脚本先加载训练
+  仓库任务与相机实现，再从`--onboard_root`末尾加入搜索路径，只导入
+  `joint_mapping.py`、`policy_context.py`、`real_control_safety.py`和
+  `unitree_boundary.py`；不得导入onboard仓库内较旧的`legged_gym`副本。
+- 固定单箱几何复用`configure_fixed_single_box()`，通过新增的保留随机化选项只覆盖
+  几何和episode长度，不关闭`go2_random_box`已有出生、观测、深度和物理随机化。
+- PhysX的`FL/FR/RL/RR`状态先编码为Unitree `FR/FL/RR/RL` LowState等价数据，
+  再由生产端`decode_low_state()`和`build_policy_proprio()`生成53维本体观测；
+  LowCmd目标经`encode_low_cmd()`后反算为环境actor动作。
+- 本体随机噪声按任务配置施加到角速度、roll/pitch、关节位置/速度与接触观测；深度
+  图由Isaac相机渲染并经过现有批量高斯噪声、距离偏置、点丢失、随机遮挡、bicubic
+  缩放与两米归一化路径。视觉GRU按10 Hz更新，动作与安全边界按50 Hz更新。
+- temporal context由生产端`update_proprio_history()`维护；`last_action`保存actor
+  原始输出，即使模型动作裁剪或LowCmd目标保护修改了实际执行动作也不回写历史。
+- 每个trial维护独立的接管、prime、transition、上次目标、接触历史和计数器。策略
+  接入后的结束优先级为：生产安全异常、任务成功、PhysX摔倒、15秒超时。
+- 诊断先按生产公式重建目标步长、机械限位与PD力矩上下界，再调用生产
+  `constrain_policy_target()`取得最终命令；只有请求落在联合区间之外且对应分量构成
+  实际联合边界时，才把该周期归因给相应限位。多类边界可在同一周期同时命中。
+- JSON schema v1保存权重哈希、Git commit、几何、随机化范围、总体成功率、各终止
+  原因、全局/逐关节裁剪周期以及逐trial结果；已有输出文件拒绝覆盖。
+
+验证：纯函数测试覆盖保留随机化、约束归因与聚合；Docker中使用CPU PhysX、CPU
+pipeline和CPU相机回读先做少量环境冒烟，再分别运行`0.25 m`和`0.45 m`的20局评测。
+运行后检查JSON可解析、trial数完整、深度/视觉/动作全部有限，并执行相关单元测试、
+Python语法检查和`git diff --check`。

@@ -81,6 +81,29 @@ TERRAIN_CLASS_NAMES = {
     22: "random_box",
 }
 
+
+def resolve_camera_position(position_config, env_id):
+    """Resolve an exact or sampled base-frame camera position for one env."""
+
+    if not isinstance(position_config, dict):
+        position = np.asarray(position_config, dtype=float)
+    elif "per_env" in position_config:
+        per_env = position_config["per_env"]
+        if env_id >= len(per_env):
+            raise IndexError(
+                f"Camera position is missing for env {env_id}; "
+                f"only {len(per_env)} per-env positions were provided."
+            )
+        position = np.asarray(per_env[env_id], dtype=float)
+    else:
+        mean = np.asarray(position_config["mean"], dtype=float)
+        std = np.asarray(position_config["std"], dtype=float)
+        position = np.random.normal(mean, std)
+
+    if position.shape != (3,) or not np.isfinite(position).all():
+        raise ValueError("Camera position must contain three finite values.")
+    return position
+
 def euler_from_quaternion(quat_angle):
         """
         Convert a quaternion into euler angles (roll, pitch, yaw)
@@ -1276,16 +1299,8 @@ class LeggedRobot(BaseTask):
             
             local_transform = gymapi.Transform()
             
-            if isinstance(config.position, dict):
-            # if False:
-                cam_x = np.random.normal(config.position['mean'][0], config.position['std'][0])
-                cam_y = np.random.normal(config.position['mean'][1], config.position['std'][1])
-                cam_z = np.random.normal(config.position['mean'][2], config.position['std'][2])
-                local_transform.p = gymapi.Vec3(cam_x, cam_y, cam_z)
-                # print('Camera position has been randomized.')
-            else:
-                camera_position = np.copy(config.position)
-                local_transform.p = gymapi.Vec3(*camera_position)
+            camera_position = resolve_camera_position(config.position, i)
+            local_transform.p = gymapi.Vec3(*camera_position)
 
             # if False:
             if hasattr(config, "rotation"):

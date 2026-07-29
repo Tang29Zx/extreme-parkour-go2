@@ -1,4 +1,6 @@
+import json
 import os, sys
+from pathlib import Path
 from statistics import mode
 sys.path.append("../../../rsl_rl")
 import torch
@@ -66,15 +68,30 @@ class HardwareVisionNN(nn.Module):
         return self.actor(obs, hist_encoding=True, eval=False, scandots_latent=depth_latent)
         # return obs, depth_latent
 
-def play(args):    
-    load_run = "../../logs/parkour_new/" + args.exptid
+def _load_manifest_env_cfg(load_run):
+    manifest_path = Path(load_run) / "run_manifest.jsonl"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"Run manifest not found: {manifest_path}")
+
+    records = [json.loads(line) for line in manifest_path.read_text().splitlines() if line.strip()]
+    if not records or "env_cfg" not in records[-1]:
+        raise ValueError(f"Run manifest does not contain env_cfg: {manifest_path}")
+    return records[-1]["env_cfg"]
+
+
+def play(args):
+    if args.load_dir:
+        load_run = os.path.abspath(args.load_dir)
+    else:
+        legged_gym_root = Path(__file__).resolve().parents[2]
+        load_run = str(legged_gym_root / "logs" / args.proj_name / args.exptid)
     checkpoint = args.checkpoint
 
     n_priv_explicit = 3 + 3 + 3
     n_priv_latent = 4 + 1 + 12 +12
     num_scan = 132
     num_actions = 12
-    
+
     # depth_buffer_len = 2
     depth_resized = (87, 58)
     
@@ -86,16 +103,32 @@ def play(args):
     load_path, checkpoint = get_load_path(root=load_run, checkpoint=checkpoint)
     load_run = os.path.dirname(load_path)
     print(f"Loading model from: {load_path}")
-    ac_state_dict = torch.load(load_path, map_location=device)
+    ac_state_dict = torch.load(load_path, map_location=device, weights_only=True)
     # policy.load_state_dict(ac_state_dict['model_state_dict'], strict=False)
     policy.actor.load_state_dict(ac_state_dict['depth_actor_state_dict'], strict=True)
     policy.estimator.load_state_dict(ac_state_dict['estimator_state_dict'])
     
     policy = policy.to(device)#.cpu()
-    if not os.path.exists(os.path.join(load_run, "traced")):
-        os.mkdir(os.path.join(load_run, "traced"))
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else Path(load_run) / "traced"
+    if args.output_dir:
+        base_path = output_dir / "base_jit.pt"
+        vision_path = output_dir / "vision_weight.pt"
+    else:
+        base_path = output_dir / f"{args.exptid}-{checkpoint}-base_jit.pt"
+        vision_path = output_dir / f"{args.exptid}-{checkpoint}-vision_weight.pt"
+    config_path = output_dir / "config.json"
+    output_paths = [base_path, vision_path]
+    if args.export_config:
+        output_paths.append(config_path)
+    existing_paths = [path for path in output_paths if path.exists()]
+    if existing_paths and not args.force:
+        raise FileExistsError(
+            "Refusing to overwrite existing export files: "
+            + ", ".join(str(path) for path in existing_paths)
+        )
+
+    env_cfg = _load_manifest_env_cfg(load_run) if args.export_config else None
     state_dict = {'depth_encoder_state_dict': ac_state_dict['depth_encoder_state_dict']}
-    torch.save(state_dict, os.path.join(load_run, "traced", args.exptid + "-" + str(checkpoint) + "-vision_weight.pt"))
 
     # Save the traced actor
     policy.eval()
@@ -109,16 +142,26 @@ def play(args):
         traced_policy = torch.jit.trace(policy, (obs_input, depth_latent))
         
         # traced_policy = torch.jit.script(policy)
-        save_path = os.path.join(load_run, "traced", args.exptid + "-" + str(checkpoint) + "-base_jit.pt")
-        traced_policy.save(save_path)
-        print("Saved traced_actor at ", os.path.abspath(save_path))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(state_dict, vision_path)
+        traced_policy.save(str(base_path))
+        if args.export_config:
+            config_path.write_text(json.dumps(env_cfg, indent=4, sort_keys=True) + "\n")
+        print("Saved base JIT at", base_path)
+        print("Saved vision weights at", vision_path)
+        if args.export_config:
+            print("Saved environment config at", config_path)
 
     
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--exptid', type=str)
+    parser.add_argument('--proj_name', type=str, default='parkour_new')
+    parser.add_argument('--load-dir', type=str, default=None)
+    parser.add_argument('--output-dir', type=str, default=None)
+    parser.add_argument('--export-config', action='store_true')
+    parser.add_argument('--force', action='store_true')
     parser.add_argument('--checkpoint', type=int, default=-1)
     parser.add_argument('--tanh', action='store_true')
     args = parser.parse_args()
     play(args)
-    

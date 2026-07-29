@@ -9,10 +9,10 @@ from legged_gym.envs.go2.go2_random_box_config import Go2RandomBoxCfg
 
 
 class RandomBoxCameraConfigTest(unittest.TestCase):
-    def test_distillation_camera_mean_is_five_centimeters_higher(self):
+    def test_distillation_camera_mean_matches_normal_d435i_mount(self):
         self.assertEqual(
             Go2RandomBoxCfg.depth.position["mean"],
-            [0.355, 0.0, 0.115],
+            [0.344, 0.0175, 0.080],
         )
         self.assertEqual(
             Go2RandomBoxCfg.depth.position["std"],
