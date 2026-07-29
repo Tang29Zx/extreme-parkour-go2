@@ -8,6 +8,7 @@ import isaacgym  # Must precede torch imports triggered by replay modules.
 from legged_gym.scripts.play_jit import (
     configure_camera_position_stress_noise,
     configure_fixed_single_box,
+    fix_replay_camera_pose,
     offset_camera_z,
     set_per_env_camera_positions,
 )
@@ -141,6 +142,22 @@ class PlayJitConfigTest(unittest.TestCase):
         self.assertEqual(positions[1], [0.205, 0.0, 0.065])
         self.assertEqual(cfg.depth.position["std"], [0.0, 0.0, 0.0])
         self.assertEqual(cfg.depth.position["per_env"], positions)
+
+    def test_replay_camera_pose_can_fix_pitch_and_position(self):
+        cfg = make_env_cfg()
+        cfg.depth.rotation = {}
+
+        rotation = fix_replay_camera_pose(
+            cfg,
+            pitch_degrees=25.0,
+            fix_position=True,
+        )
+
+        self.assertEqual(cfg.depth.rotation["lower"], rotation)
+        self.assertEqual(cfg.depth.rotation["upper"], rotation)
+        self.assertAlmostEqual(rotation[1], 0.4363323129985824)
+        self.assertEqual(cfg.depth.position["mean"], [0.355, 0.0, 0.065])
+        self.assertEqual(cfg.depth.position["std"], [0.0, 0.0, 0.0])
 
 
 if __name__ == "__main__":

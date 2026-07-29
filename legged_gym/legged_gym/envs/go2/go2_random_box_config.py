@@ -113,14 +113,12 @@ class Go2RandomBoxCfg(Go2ParkourCfg):
         camera_terrain_num_rows = 10
         camera_terrain_num_cols = 40
         position = {
-            # Estimated depth origin of the normally mounted D435i. The depth
-            # origin is the left infrared imager, hence the positive Y offset.
-            "mean": [0.344, 0.0175, 0.080],
+            "mean": [0.355, 0.0, 0.085],
             "std": [0.015, 0.01, 0.015],
         }
         rotation = {
-            "lower": [-0.0349066, 0.349066, -0.0349066],
-            "upper": [0.0349066, 0.436332, 0.0349066],
+            "lower": [-0.0349066, 0.3926991, -0.0349066],
+            "upper": [0.0349066, 0.4799655, 0.0349066],
         }
         horizontal_fov = [86, 90]
         gaussian_noise_std = 0.01

@@ -242,6 +242,8 @@ def get_args():
         {"name": "--fixed_friction", "type": float, "default": None, "help": "use one rigid-shape friction coefficient during replay"},
         {"name": "--fixed_ground_roughness", "type": float, "default": 0.005, "help": "fixed single-box ground roughness magnitude in meters"},
         {"name": "--camera_z_offset", "type": float, "default": 0.0, "help": "offset the configured camera position mean along base-frame Z in meters"},
+        {"name": "--fixed_camera_pitch_deg", "type": float, "default": None, "help": "fix replay camera roll/yaw to zero and pitch to this angle in degrees"},
+        {"name": "--fixed_camera_position", "action": "store_true", "default": False, "help": "use the configured camera position mean without position sampling during replay"},
         {"name": "--stop_on_done", "action": "store_true", "default": False, "help": "stop replay recording when the first environment finishes"},
         {"name": "--camera_positions_file", "type": str, "default": None, "help": "JSON list of labeled camera positions for stress evaluation"},
         {"name": "--trials_per_position", "type": int, "default": 1, "help": "parallel first-episode trials per camera position"},

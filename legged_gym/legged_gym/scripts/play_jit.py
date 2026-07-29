@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 from datetime import datetime
 
 import isaacgym
@@ -151,6 +152,30 @@ def offset_camera_z(env_cfg, offset):
     return position, None
 
 
+def fix_replay_camera_pose(env_cfg, pitch_degrees, fix_position=False):
+    """Fix replay orientation and optionally use the exact position mean."""
+
+    rotation = [0.0, math.radians(pitch_degrees), 0.0]
+    env_cfg.depth.rotation = {
+        "lower": rotation.copy(),
+        "upper": rotation.copy(),
+    }
+
+    if fix_position:
+        if isinstance(env_cfg.depth.position, dict):
+            position = deepcopy(env_cfg.depth.position)
+            position.pop("per_env", None)
+            position["std"] = [0.0, 0.0, 0.0]
+            env_cfg.depth.position = position
+        else:
+            env_cfg.depth.position = {
+                "mean": list(env_cfg.depth.position),
+                "std": [0.0, 0.0, 0.0],
+            }
+
+    return rotation
+
+
 def resolve_model_paths(model_dir):
     if model_dir is None:
         resolved_dir = Path(LEGGED_GYM_ROOT_DIR) / "logs" / "traced"
@@ -223,6 +248,20 @@ def configure_replay_env(env_cfg, args):
     camera_mean, camera_std = offset_camera_z(
         env_cfg, args.camera_z_offset
     )
+    fixed_camera_pitch_deg = getattr(args, "fixed_camera_pitch_deg", None)
+    fixed_camera_position = getattr(args, "fixed_camera_position", False)
+    if fixed_camera_pitch_deg is not None:
+        fixed_rotation = fix_replay_camera_pose(
+            env_cfg,
+            fixed_camera_pitch_deg,
+            fix_position=fixed_camera_position,
+        )
+        if fixed_camera_position:
+            camera_std = env_cfg.depth.position["std"]
+        print(
+            "Fixed replay camera pose: "
+            f"rotation={fixed_rotation}, exact_position={fixed_camera_position}"
+        )
     print(
         "Replay camera position: "
         f"mean={camera_mean}, std={camera_std}, "
@@ -284,6 +323,11 @@ def validate_replay_args(args):
         raise ValueError("--record requires the Isaac Gym viewer; omit --headless.")
     if not math.isfinite(args.camera_z_offset):
         raise ValueError("--camera_z_offset must be finite.")
+    fixed_camera_pitch_deg = getattr(args, "fixed_camera_pitch_deg", None)
+    if fixed_camera_pitch_deg is not None and not math.isfinite(
+        fixed_camera_pitch_deg
+    ):
+        raise ValueError("--fixed_camera_pitch_deg must be finite.")
     if args.fixed_box_height is not None:
         if args.task not in RANDOM_BOX_TASKS:
             raise ValueError(
@@ -334,6 +378,11 @@ def capture_frame(recorder, env):
         / f"{recorder['frame_count']:06d}.png"
     )
     env.gym.write_viewer_image_to_file(env.viewer, str(frame_path))
+    deadline = time.monotonic() + 2.0
+    while not frame_path.is_file():
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Viewer frame was not written: {frame_path}")
+        time.sleep(0.002)
     recorder["frame_count"] += 1
 
 
@@ -343,6 +392,12 @@ def finalize_recording(recorder):
     try:
         if recorder["frame_count"] == 0:
             raise RuntimeError("No viewer frames were captured.")
+        written_frames = len(list(Path(recorder["frame_dir"].name).glob("*.png")))
+        if written_frames != recorder["frame_count"]:
+            raise RuntimeError(
+                "Viewer recording is incomplete: "
+                f"requested={recorder['frame_count']}, written={written_frames}."
+            )
         frame_pattern = str(Path(recorder["frame_dir"].name) / "%06d.png")
         command = [
             "ffmpeg",
