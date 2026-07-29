@@ -1738,6 +1738,27 @@ class LeggedRobot(BaseTask):
     def _reward_dof_error(self):
         dof_error = torch.sum(torch.square(self.dof_pos - self.default_dof_pos), dim=1)
         return dof_error
+
+    def _reward_dof_vel_limits(self):
+        """Penalize normalized velocity beyond the configured soft limit."""
+        velocity_ratio = torch.abs(self.dof_vel) / self.dof_vel_limits.unsqueeze(0)
+        excess = torch.clamp(
+            velocity_ratio - self.cfg.rewards.soft_dof_vel_limit,
+            min=0.0,
+        )
+        return torch.sum(torch.square(excess), dim=1)
+
+    def _reward_dof_pos_limits(self):
+        """Penalize motion outside the soft position limits built from the URDF."""
+        lower_excess = torch.clamp(
+            self.dof_pos_limits[:, 0] - self.dof_pos,
+            min=0.0,
+        )
+        upper_excess = torch.clamp(
+            self.dof_pos - self.dof_pos_limits[:, 1],
+            min=0.0,
+        )
+        return torch.sum(lower_excess + upper_excess, dim=1)
     
     def _reward_feet_stumble(self):
         # Penalize feet hitting vertical surfaces

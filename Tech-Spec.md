@@ -223,3 +223,71 @@
 pipeline和CPU相机回读先做少量环境冒烟，再分别运行`0.25 m`和`0.45 m`的20局评测。
 运行后检查JSON可解析、trial数完整、深度/视觉/动作全部有限，并执行相关单元测试、
 Python语法检查和`git diff --check`。
+
+## Onboard条件式力矩逃逸A/B
+
+- `--enable_torque_escape`只控制仿真评测调用参数。未指定时，
+  `constrain_policy_target()`收到`escape_max_step_rad=None`，复现改动前行为；指定后，
+  只有稳态周期传入生产模块的`POLICY_TORQUE_ESCAPE_MAX_STEP_RAD_BY_JOINT`，接入周期
+  仍传`None`。若加载的Onboard模块不提供该常量，评测应在建模前失败。
+- 普通`constraint_diagnostics()`继续重建0.21/0.20步长、机械和PD力矩区间。生产函数
+  返回后，以`abs(commanded-previous)>ordinary_step`识别逃逸关节；普通区间无解关节
+  必须与逃逸关节完全一致，否则拒绝该评测结果。普通区间可行时仍逐值断言诊断目标与
+  生产目标一致。
+- 每个trial新增`torque_escape_cycles`、`torque_escape_by_joint`和
+  `torque_escape_events`。事件保存policy周期、actor顺序关节名/索引、请求/上一/下发/
+  实测位置、实测速度和逃逸前后预测PD力矩；所有数值在写JSON前转为Python标量。
+- JSON schema升级并保存逃逸是否启用、普通/逃逸步长向量和所加载Onboard纯函数文件
+  SHA-256。A/B必须分别写新文件，仍拒绝覆盖已有结果。
+- 聚焦测试覆盖新增计数聚合及普通不可行诊断；完整验证使用同一seed分别运行A/B，
+  比较每个`env_id`的randomization字段、traced哈希和故障详情，再执行语法与diff检查。
+
+2026-07-29闭环验证使用`model_38300`、完整启动/相机/物理随机化、seed 17和每组20局。
+`0.25 m`两组逐项相同：均成功8局、安全硬停5局、超时7局，5次硬停全为实测速度越界，
+逃逸0次，因此该批未复现真机RR thigh空交集。`0.45 m`旧组成功0局、安全硬停17局、
+超时3局，其中5局在RR thigh出现普通步长上界低于PD力矩下界；所需步长为
+`0.244464/0.310337/0.261843/0.268875/0.234695 rad`。新组对其中4局执行0.30内逃逸，
+预测PD力矩均降到`-23.7 Nm`；0.310337局继续按设计急停。新组最终成功3局、安全硬停
+14局、超时3局，但只有1个成功trial自身发生过逃逸；其他并行环境在首个逃逸后会因
+批量随机数消费变化而分叉，不能把全部成功率差异归因给逃逸。两组权重、Onboard模块
+SHA和逐环境初始随机化已核对一致。另从Onboard `HEAD db61c2d`建立临时工作树，使用
+真实改动前`real_control_safety.py`（SHA-256 `413136b8...`）重跑0.45 m；其summary、
+20条trial和随机化与当前源码关闭逃逸组逐值一致，证明A组不是近似替代。临时工作树
+已在确认无修改后移除。
+
+参考录制复用`play_jit.py`的Viewer逐帧PNG与ffmpeg H.264编码器。评测循环在每次
+`env.step()`后采集一帧；指定`--stop_on_done`时只以`viewer_env_id`的结束状态作为
+录制停止点，未结束的并行trial在诊断JSON中明确标为`evaluator_incomplete`，不得用于
+成功率统计。0.45 m当前代码env 12参考视频为1600×900、50 FPS、522帧、10.44秒，
+对应trial在第148个policy周期对RR thigh逃逸并于第340周期成功。
+
+## 部署限位奖励塑形
+
+`LeggedRobot._reward_dof_vel_limits()`按每关节
+`max(abs(dq)/urdf_limit - soft_dof_vel_limit, 0)^2`求和。`go2_random_box`设置
+`soft_dof_vel_limit=0.8`和scale `-5.0`，使惩罚在部署端`1.005×limit`硬停之前出现，
+同时保持低速动作零惩罚。
+
+`LeggedRobot._reward_dof_pos_limits()`对已由`_process_dof_props()`按
+`soft_dof_pos_limit=0.9`收缩的上下界计算线性越界量并求和，任务scale为`-2.0`。
+两个函数只有在配置存在非零scale时才由现有奖励注册器调用，不改变其他任务。
+
+运行时目标制动因calf机械目标边界导致空交集而淘汰；动态Kd通过等效PD目标作用于
+PhysX后的A/B同样无净改善，相关CLI、计数和控制分支均已删除。当前traced权重保持
+不变，必须以新奖励微调/训练、成对导出base与vision权重，再复用seed 17、20环境的
+`0.25/0.45 m`完整Onboard闭环比较成功、硬停、超时和故障关节。
+
+## 仿真边界覆盖扫描
+
+`evaluate_onboard_single_box.py`新增三个默认关闭的诊断参数：
+
+- `--diagnostic_calf_velocity_limit`：只替换actor索引`2/5/8/11`在运行期状态检查中
+  使用的速度额定值。
+- `--diagnostic_position_tolerance_extra_rad`：只把传入运行期位置检查的上下界向外
+  平移；生产函数自身的`0.05 rad`容差仍保留，目标约束继续使用原URDF边界。
+- `--diagnostic_rr_thigh_escape_step_rad`：只替换启用力矩逃逸时actor索引7的最大
+  逃逸步长，普通0.21步长及其他关节逃逸值不变。
+
+解析函数拒绝非有限值、收紧生产值或未启用力矩逃逸却请求逃逸覆盖。评测启动时必须
+打印诊断警告，JSON同时保存名义/有效速度、名义/有效状态位置边界和名义/有效逃逸
+向量。最大关节速度比例继续按名义URDF计算，避免放宽后指标分母变化掩盖真实峰值。

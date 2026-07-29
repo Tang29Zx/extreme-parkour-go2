@@ -109,6 +109,16 @@ class Go2RandomBoxCfg(Go2ParkourCfg):
             goal_yaw = 0.02
             height_measurements = 0.03
 
+    class rewards(Go2ParkourCfg.rewards):
+        # Start shaping before the onboard hard checks at 100.5% of the URDF
+        # limits. This leaves impact authority while teaching the policy to
+        # unload the calves before a landing becomes unrecoverable.
+        soft_dof_vel_limit = 0.8
+
+        class scales(Go2ParkourCfg.rewards.scales):
+            dof_vel_limits = -5.0
+            dof_pos_limits = -2.0
+
     class depth(Go2ParkourCfg.depth):
         camera_terrain_num_rows = 10
         camera_terrain_num_cols = 40

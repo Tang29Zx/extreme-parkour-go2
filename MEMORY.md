@@ -358,3 +358,82 @@
   位置标准差仍为`(0.015,0.010,0.015) m`，姿态仍为roll/yaw `±2°`、pitch
   `20～25°`。该位置是厘米级工程估计，实机测量后仍应校准；已有checkpoint
   和导出包保留各自训练时的`(0.355,0,0.115) m`配置，不追溯改写。
+- `model_38300`的calf过冲根因位于训练契约而不只是部署保护：默认角`-1.5 rad`、
+  `clip_actions=1.2`和`action_scale=0.25`允许PD目标到`-2.70 rad`，距离URDF机械下限
+  `-2.7227 rad`仅`0.0227 rad`。`soft_dof_pos_limit=0.9`虽然计算出约`-2.6285 rad`
+  的软下界，但奖励scale中没有`dof_pos_limits`，代码也没有对应奖励函数；episode
+  termination同样不检查关节位置或速度。因此策略可以依赖PhysX关节止挡完成动作，
+  没有被训练成在高速接近下限时主动回撤。
+- 仿真本身也会越过URDF名义下限：既有0.45 m确定性S2S记录中FR/FL/RR/RL calf
+  最小角分别为`-2.74354/-2.74083/-2.75133/-2.72816 rad`，最深超出名义下限
+  `0.02863 rad`，但仍在部署检查额外`0.05 rad`容差内；旧0.20/0.40随机化0.45 m
+  20局还出现1次`measured joint position exceeded its limit`，证明至少一次仿真状态
+  越过了带容差边界。当前0.30/0.40的0.25 m seed 17/18共40局没有位置硬停，只能
+  说明该批样本未复现真机轨迹，不能说明PhysX没有动态过冲。
+
+## Onboard条件式力矩逃逸闭环A/B（2026-07-29）
+
+- `evaluate_onboard_single_box.py`新增显式`--enable_torque_escape`。默认不传生产逃逸
+  参数，等价于改动前普通步长失交即急停；启用后仅稳态传入Onboard的
+  `(0.30, 0.30, 0.20) × 4`逃逸向量，首1秒接入仍禁用。JSON v2新增逃逸总数、逐关节
+  次数、逐事件requested/previous/commanded/measured q/dq和预测力矩，并记录四个
+  Onboard纯函数SHA-256。
+- `model_38300`、完整启动/深度相机/物理随机化、seed 17、每组20局的`0.25 m`A/B
+  完全相同：成功8/20、安全硬停5、超时7；5次硬停全为实测速度越界，逃逸0次。
+  该批没有复现真机RR thigh空交集。
+- 相同条件的`0.45 m`旧组成功0/20、安全硬停17、超时3；其中5局严格复现
+  `RR_thigh_joint`普通0.21步长上界低于PD力矩下界，所需步长分别为
+  `0.244464/0.310337/0.261843/0.268875/0.234695 rad`。新版对0.30内的4局执行
+  逃逸，预测力矩均从约`-33.1～-34.5 Nm`降至`-23.7 Nm`；需要0.310337的1局仍
+  急停。4个逃逸trial后续为1成功、1超时、2次更晚的速度硬停。
+- 新版0.45 m总体为成功3/20、安全硬停14、超时3。只有1个成功trial自身发生逃逸；
+  另2个无本地逃逸的并行trial在首个其他环境逃逸后发生结果分叉，原因是向量化仿真
+  后续共享随机数消费改变，不能把总体0→3成功全部归因于逃逸。A/B初始逐环境随机化、
+  traced资产和Onboard模块SHA均已核对一致。
+- 为排除“关闭开关不等于旧源码”的歧义，另从Onboard `HEAD db61c2d`建立临时工作树，
+  以真实改动前`real_control_safety.py`（SHA-256 `413136b8...`）重跑0.45 m；summary、
+  20条trial和随机化与当前源码关闭逃逸组逐值一致。该结果为
+  `artifacts/onboard_model_38300_step021_calf020_exact_head_box045_trials20_seed17.json`；
+  临时工作树已在确认无修改后移除。
+- 另外四份A/B结果分别为`artifacts/onboard_model_38300_step021_calf020_escape_{off,on}_box0{25,45}_trials20_seed17.json`。
+  CPU PhysX不能代表固件PD、传动弹性或真机时延；复现只证明故障类别和条件式分支在
+  闭环仿真中可发生，不构成真机安全验收。
+- Isaac Gym容器内46项训练仓库测试、宿主语法检查和两个仓库的`git diff --check`
+  通过；五份JSON均为schema v2、每份20条trial、所有数值有限且结果计数完整。
+- Onboard评测入口已复用现有Viewer录制器，支持`--record`并在`--stop_on_done`时以
+  `viewer_env_id`结束录制。0.45 m当前代码、seed 17、20环境并行、跟随env 12的参考
+  视频位于`artifacts/onboard_current_box045_escape_env12_seed17.mp4`：H.264、
+  `1600×900`、50 FPS、522帧、10.44秒、2317918字节。env 12在policy周期148执行
+  RR thigh `0.261843 rad`逃逸，预测力矩`-34.1737 -> -23.7 Nm`，周期340成功。
+  视频保留20狗并行画面是用户确认接受的参考形式，不是单环境成功率样本。
+- 同一seed、随机化、20环境和env 12视角的原代码完整对照视频位于
+  `artifacts/onboard_original_box045_rrthigh_fault_env12_seed17_full.mp4`。该录制实际
+  加载Onboard `HEAD db61c2d`，未启用力矩逃逸；env 12在policy周期148因
+  `RR_thigh_joint`普通步长上界`+0.294832 rad`低于PD力矩目标下界`+0.346675 rad`
+  而安全停止，之后以安全待机目标继续录到全部20环境结束。视频为H.264、
+  `1600×900`、50 FPS、932帧、18.64秒、2666921字节，SHA-256为
+  `cc3641ed39c0e4c034b5f0e78601c4d72cac671fd8c012e45afaf410d2eb2c8d`。不带
+  `_full`的6.60秒文件因使用`--stop_on_done`在env 12触发时提前结束，只保留为故障点
+  短片，不作为完整回放。
+
+## 部署限位训练奖励（2026-07-29）
+
+- 当前Onboard闭环详细基线位于
+  `artifacts/onboard_current_detailed_box0{25,45}_trials20_seed17.json`。0.25 m为
+  8成功、5安全硬停、7超时，硬停是4次FL calf和1次RL calf负向速度越界；0.45 m
+  为3成功、14安全硬停、3超时，主导是11次FL calf负向速度越界，另有1次RR calf
+  负向速度、1次RR calf位置及1次RR thigh超过0.30逃逸上限。actor索引5是
+  `FL_calf_joint`，因为策略顺序为`FR/FL/RR/RL`。
+- 运行时候选均未保留：目标制动的0.25 m 20局全部目标不可行；等效PD目标验证过的
+  全关节Kd×1.2在0.25 m为`9成功/2硬停/9超时`，但0.45 m恶化为`0/19/1`；仅处理
+  FL calf负向速度的0.45 m为`3/17/0`。这证明接触冲击不能靠简单提高运行时阻尼解决。
+  对应实验JSON保留在`artifacts/onboard_velocity_brake080_*`、
+  `artifacts/onboard_velocity_damping_physical080_*`和
+  `artifacts/onboard_fl_calf_damping080_*`，代码中的实验CLI、计数和控制分支已回滚。
+- `LeggedRobot`新增按URDF速度额定值归一化的二次超量奖励，以及基于已处理软位置区间
+  的越界奖励。`go2_random_box`任务从80%额定速度开始塑形，scale为
+  `dof_vel_limits=-5.0`、`dof_pos_limits=-2.0`；基础任务没有非零scale，因此行为不变。
+- Docker内49项训练仓库测试、Onboard 70项测试、Python语法、两个仓库
+  `git diff --check`和1环境CPU PhysX/CPU相机闭环冒烟通过。冒烟只验证新增奖励能在
+  实际环境奖励注册与step路径运行，不代表成功率改善。当前`model_38300`权重没有改变，
+  需微调/重训和重新导出后才能做有效的成功率A/B。本轮未连接Jetson或真机。

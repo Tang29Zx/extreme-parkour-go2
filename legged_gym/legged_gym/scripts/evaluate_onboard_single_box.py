@@ -20,7 +20,10 @@ import torch
 from legged_gym.envs import *  # noqa: F401,F403 -- registers task classes.
 from legged_gym.scripts.play_jit import (
     RANDOM_BOX_TASKS,
+    capture_frame,
     configure_fixed_single_box,
+    create_recorder,
+    finalize_recording,
     load_models,
     validate_replay_args,
 )
@@ -39,6 +42,7 @@ COUNTER_NAMES = (
     "target_step_limit_cycles",
     "joint_limit_cycles",
     "pd_torque_limit_cycles",
+    "torque_escape_cycles",
 )
 JOINT_COUNTER_NAMES = (
     "raw_action_clip_by_joint",
@@ -47,6 +51,7 @@ JOINT_COUNTER_NAMES = (
     "target_step_limit_by_joint",
     "joint_limit_by_joint",
     "pd_torque_limit_by_joint",
+    "torque_escape_by_joint",
 )
 
 
@@ -90,6 +95,7 @@ class TrialState:
     target_step_limit_cycles: int = 0
     joint_limit_cycles: int = 0
     pd_torque_limit_cycles: int = 0
+    torque_escape_cycles: int = 0
     raw_action_clip_by_joint: np.ndarray = field(
         default_factory=lambda: np.zeros(12, dtype=np.int64)
     )
@@ -108,6 +114,10 @@ class TrialState:
     pd_torque_limit_by_joint: np.ndarray = field(
         default_factory=lambda: np.zeros(12, dtype=np.int64)
     )
+    torque_escape_by_joint: np.ndarray = field(
+        default_factory=lambda: np.zeros(12, dtype=np.int64)
+    )
+    torque_escape_events: list = field(default_factory=list)
     max_abs_raw_action: float = 0.0
     max_request_command_delta: float = 0.0
     max_command_step: float = 0.0
@@ -328,6 +338,79 @@ def _resolve_output(path: str) -> Path:
     return output
 
 
+def resolve_diagnostic_safety_inputs(args, safety, control):
+    """Build simulation-only safety inputs while preserving production defaults."""
+
+    velocity_limits = np.asarray(
+        safety.GO2_JOINT_VELOCITY_LIMITS,
+        dtype=np.float64,
+    ).copy()
+    runtime_joint_low = np.asarray(
+        safety.GO2_JOINT_LIMITS_LOW,
+        dtype=np.float64,
+    ).copy()
+    runtime_joint_high = np.asarray(
+        safety.GO2_JOINT_LIMITS_HIGH,
+        dtype=np.float64,
+    ).copy()
+    escape_steps = np.asarray(
+        control.POLICY_TORQUE_ESCAPE_MAX_STEP_RAD_BY_JOINT,
+        dtype=np.float64,
+    ).copy()
+
+    calf_limit = args.diagnostic_calf_velocity_limit
+    if calf_limit is not None:
+        calf_limit = float(calf_limit)
+        nominal_calf_limit = float(velocity_limits[2])
+        if not math.isfinite(calf_limit) or calf_limit < nominal_calf_limit:
+            raise ValueError(
+                "--diagnostic_calf_velocity_limit must be finite and at least "
+                f"the production value {nominal_calf_limit:.6f}."
+            )
+        velocity_limits[[2, 5, 8, 11]] = calf_limit
+
+    position_extra = float(args.diagnostic_position_tolerance_extra_rad)
+    if not math.isfinite(position_extra) or position_extra < 0.0:
+        raise ValueError(
+            "--diagnostic_position_tolerance_extra_rad must be finite and "
+            "non-negative."
+        )
+    runtime_joint_low -= position_extra
+    runtime_joint_high += position_extra
+
+    rr_thigh_escape = args.diagnostic_rr_thigh_escape_step_rad
+    if rr_thigh_escape is not None:
+        if not args.enable_torque_escape:
+            raise ValueError(
+                "--diagnostic_rr_thigh_escape_step_rad requires "
+                "--enable_torque_escape."
+            )
+        rr_thigh_escape = float(rr_thigh_escape)
+        nominal_escape = float(escape_steps[7])
+        if not math.isfinite(rr_thigh_escape) or rr_thigh_escape < nominal_escape:
+            raise ValueError(
+                "--diagnostic_rr_thigh_escape_step_rad must be finite and at "
+                f"least the production value {nominal_escape:.6f}."
+            )
+        escape_steps[7] = rr_thigh_escape
+
+    enabled = bool(
+        calf_limit is not None
+        or position_extra > 0.0
+        or rr_thigh_escape is not None
+    )
+    return {
+        "enabled": enabled,
+        "velocity_limits": velocity_limits,
+        "runtime_joint_low": runtime_joint_low,
+        "runtime_joint_high": runtime_joint_high,
+        "escape_steps": escape_steps,
+        "calf_velocity_limit": calf_limit,
+        "position_tolerance_extra_rad": position_extra,
+        "rr_thigh_escape_step_rad": rr_thigh_escape,
+    }
+
+
 def _synthesize_low_states(env, modules):
     mapping = modules["joint_mapping"]
     boundary = modules["unitree_boundary"]
@@ -439,6 +522,7 @@ def _trial_record(state: TrialState, randomization: Dict[str, Any]) -> Dict[str,
         "policy_cycles": state.policy_cycles,
         **{name: int(getattr(state, name)) for name in COUNTER_NAMES},
         **{name: getattr(state, name).tolist() for name in JOINT_COUNTER_NAMES},
+        "torque_escape_events": state.torque_escape_events,
         "max_abs_raw_action": state.max_abs_raw_action,
         "max_request_command_delta": state.max_request_command_delta,
         "max_command_step": state.max_command_step,
@@ -475,6 +559,14 @@ def evaluate(args) -> None:
     context = modules["policy_context"]
     control = modules["real_control_safety"]
     safety = modules["unitree_boundary"]
+    if args.enable_torque_escape and not hasattr(
+        control,
+        "POLICY_TORQUE_ESCAPE_MAX_STEP_RAD_BY_JOINT",
+    ):
+        raise RuntimeError(
+            "Loaded onboard safety module does not support torque escape."
+        )
+    diagnostic = resolve_diagnostic_safety_inputs(args, safety, control)
     traced_dir = (
         Path(args.jit_model_dir).expanduser().resolve()
         if args.jit_model_dir is not None
@@ -526,6 +618,7 @@ def evaluate(args) -> None:
             while monotonic() < delay_deadline:
                 env.render(sync_frame_time=False)
                 sleep(0.02)
+    recorder = create_recorder(args, env)
     device = torch.device(env.device)
     base_model, depth_encoder = load_models(str(traced_dir), device)
 
@@ -573,8 +666,18 @@ def evaluate(args) -> None:
     print(
         "Onboard evaluation: "
         f"height={args.fixed_box_height:.2f} m, trials={num_envs}, "
-        f"seed={env_cfg.seed}, policy_limit={args.policy_duration_s:.2f} s"
+        f"seed={env_cfg.seed}, policy_limit={args.policy_duration_s:.2f} s, "
+        f"torque_escape={'enabled' if args.enable_torque_escape else 'disabled'}"
     )
+    if diagnostic["enabled"]:
+        print(
+            "WARNING: simulation-only safety overrides are enabled: "
+            f"calf_velocity_limit={diagnostic['calf_velocity_limit']}, "
+            "position_tolerance_extra_rad="
+            f"{diagnostic['position_tolerance_extra_rad']}, "
+            "rr_thigh_escape_step_rad="
+            f"{diagnostic['rr_thigh_escape_step_rad']}"
+        )
     print(
         "Randomization enabled: start pose/joints, observation/depth, camera "
         "extrinsics/FOV, friction, mass/COM, motor, pushes, action delay"
@@ -751,9 +854,9 @@ def evaluate(args) -> None:
                         (step - latest_depth_step[index]) * float(env.dt),
                         state.joint_q,
                         state.joint_dq,
-                        safety.GO2_JOINT_LIMITS_LOW,
-                        safety.GO2_JOINT_LIMITS_HIGH,
-                        safety.GO2_JOINT_VELOCITY_LIMITS,
+                        diagnostic["runtime_joint_low"],
+                        diagnostic["runtime_joint_high"],
+                        diagnostic["velocity_limits"],
                     )
                     observed, clipped, requested = control.prepare_policy_action(
                         raw,
@@ -801,6 +904,11 @@ def evaluate(args) -> None:
                         safety.GO2_TORQUE_LIMITS,
                         max_step,
                     )
+                    constraint_kwargs = {"max_step_rad": max_step}
+                    if args.enable_torque_escape and not engagement_active:
+                        constraint_kwargs["escape_max_step_rad"] = (
+                            diagnostic["escape_steps"]
+                        )
                     commanded = control.constrain_policy_target(
                         transition_target,
                         trial.previous_target_q,
@@ -811,15 +919,80 @@ def evaluate(args) -> None:
                         safety.GO2_JOINT_LIMITS_LOW,
                         safety.GO2_JOINT_LIMITS_HIGH,
                         safety.GO2_TORQUE_LIMITS,
-                        max_step_rad=max_step,
+                        **constraint_kwargs,
                     )
-                    expected = np.clip(
-                        transition_target,
-                        diagnostics["lower"],
-                        diagnostics["upper"],
+                    max_step_vector = np.asarray(max_step, dtype=np.float64)
+                    if max_step_vector.ndim == 0:
+                        max_step_vector = np.full(
+                            12,
+                            float(max_step_vector),
+                            dtype=np.float64,
+                        )
+                    escape_joints = (
+                        np.abs(commanded - trial.previous_target_q)
+                        > max_step_vector + 1e-9
                     )
-                    if not np.allclose(commanded, expected, atol=1e-10, rtol=0.0):
-                        raise RuntimeError("Safety diagnostic and production target differ")
+                    if bool(np.any(diagnostics["infeasible"])):
+                        if not np.array_equal(
+                            escape_joints,
+                            diagnostics["infeasible"],
+                        ):
+                            raise RuntimeError(
+                                "Production torque escape does not match ordinary "
+                                "infeasible joints"
+                            )
+                    else:
+                        expected = np.clip(
+                            transition_target,
+                            diagnostics["lower"],
+                            diagnostics["upper"],
+                        )
+                        if not np.allclose(
+                            commanded,
+                            expected,
+                            atol=1e-10,
+                            rtol=0.0,
+                        ):
+                            raise RuntimeError(
+                                "Safety diagnostic and production target differ"
+                            )
+                        if bool(np.any(escape_joints)):
+                            raise RuntimeError(
+                                "Torque escape used while ordinary bounds were feasible"
+                            )
+                    if bool(np.any(escape_joints)):
+                        trial.torque_escape_cycles += 1
+                        trial.torque_escape_by_joint += escape_joints
+                        previous_torque = (
+                            contract.kp
+                            * (trial.previous_target_q - state.joint_q)
+                            - contract.kd * state.joint_dq
+                        )
+                        commanded_torque = (
+                            contract.kp * (commanded - state.joint_q)
+                            - contract.kd * state.joint_dq
+                        )
+                        for joint in np.flatnonzero(escape_joints):
+                            trial.torque_escape_events.append(
+                                {
+                                    "policy_cycle": int(trial.policy_cycles),
+                                    "joint_index": int(joint),
+                                    "joint_name": mapping.POLICY_DOF_NAMES[joint],
+                                    "requested_q": float(transition_target[joint]),
+                                    "previous_q": float(
+                                        trial.previous_target_q[joint]
+                                    ),
+                                    "commanded_q": float(commanded[joint]),
+                                    "measured_q": float(state.joint_q[joint]),
+                                    "measured_dq": float(state.joint_dq[joint]),
+                                    "previous_predicted_torque": float(
+                                        previous_torque[joint]
+                                    ),
+                                    "commanded_predicted_torque": float(
+                                        commanded_torque[joint]
+                                    ),
+                                }
+                            )
                     if engagement_active:
                         trial.transition.record_executed_target(commanded)
 
@@ -836,6 +1009,8 @@ def evaluate(args) -> None:
                         ("torque", "pd_torque_limit_cycles", "pd_torque_limit_by_joint"),
                     ):
                         hits = diagnostics[key] & constraint_joints
+                        if key == "step":
+                            hits = np.logical_or(hits, escape_joints)
                         if bool(np.any(hits)):
                             setattr(trial, cycle_name, getattr(trial, cycle_name) + 1)
                             setattr(trial, joint_name, getattr(trial, joint_name) + hits)
@@ -893,6 +1068,7 @@ def evaluate(args) -> None:
         _, _, _, done, infos = env.step(
             torch.as_tensor(env_actions, device=device, dtype=torch.float32)
         )
+        capture_frame(recorder, env)
         depth_frame = infos.get("depth")
         depth_encoder.reset(done)
 
@@ -942,6 +1118,13 @@ def evaluate(args) -> None:
         if step % 250 == 0:
             counts = Counter(trial.outcome or trial.phase for trial in trials)
             print(f"step={step} progress={dict(sorted(counts.items()))}")
+        if args.stop_on_done and trials[viewer_env_id].completed:
+            print(
+                "Stopping evaluation after viewer environment "
+                f"{viewer_env_id} completed with "
+                f"outcome={trials[viewer_env_id].outcome}"
+            )
+            break
 
     for trial in trials:
         if not trial.completed:
@@ -957,18 +1140,24 @@ def evaluate(args) -> None:
             env.render(sync_frame_time=False)
             sleep(0.02)
 
+    finalize_recording(recorder)
+
     records = [
         _trial_record(trial, randomization[trial.env_id]) for trial in trials
     ]
     summary = summarize_trials(records)
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "task": args.task,
         "seed": int(env_cfg.seed),
         "training_repository_commit": _git_commit(
             Path(__file__).resolve().parents[3]
         ),
         "onboard_repository_commit": _git_commit(onboard_root),
+        "onboard_modules_sha256": {
+            name: _sha256(Path(module.__file__).resolve())
+            for name, module in modules.items()
+        },
         "traced_assets": {
             path.name: _sha256(path)
             for path in (
@@ -993,9 +1182,34 @@ def evaluate(args) -> None:
             "steady_step_rad_by_joint": list(
                 control.POLICY_TARGET_MAX_STEP_RAD_BY_JOINT
             ),
+            "torque_escape_enabled": bool(args.enable_torque_escape),
+            "torque_escape_step_rad_by_joint": (
+                diagnostic["escape_steps"].tolist()
+                if args.enable_torque_escape
+                else None
+            ),
+            "diagnostic_overrides_enabled": diagnostic["enabled"],
+            "diagnostic_calf_velocity_limit": diagnostic[
+                "calf_velocity_limit"
+            ],
+            "diagnostic_position_tolerance_extra_rad": diagnostic[
+                "position_tolerance_extra_rad"
+            ],
+            "diagnostic_rr_thigh_escape_step_rad": diagnostic[
+                "rr_thigh_escape_step_rad"
+            ],
             "joint_limits_low": safety.GO2_JOINT_LIMITS_LOW.tolist(),
             "joint_limits_high": safety.GO2_JOINT_LIMITS_HIGH.tolist(),
             "joint_velocity_limits": safety.GO2_JOINT_VELOCITY_LIMITS.tolist(),
+            "runtime_joint_limits_low": diagnostic[
+                "runtime_joint_low"
+            ].tolist(),
+            "runtime_joint_limits_high": diagnostic[
+                "runtime_joint_high"
+            ].tolist(),
+            "runtime_joint_velocity_limits": diagnostic[
+                "velocity_limits"
+            ].tolist(),
             "torque_limits": safety.GO2_TORQUE_LIMITS.tolist(),
         },
         "randomization": {
